@@ -1,0 +1,32 @@
+name: Actualizar HTML horario
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # Corre el minuto 0 de cada hora
+  workflow_dispatch:      # Te permite correrlo manualmente desde la web para probar
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Clonar repositorio
+      uses: actions/checkout@v4
+
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Instalar dependencias
+      run: pip install pytz
+
+    - name: Ejecutar script
+      run: python generar_html.py
+
+    - name: Commitear y pushear cambios
+      run: |
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        git add mundial.html
+        git commit -m "Actualización automática: $(date)" || exit 0
+        git push
