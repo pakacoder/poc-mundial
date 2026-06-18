@@ -24,6 +24,9 @@ jobs:
       run: python generar_html.py
       
     - name: Auto Commit y Push del HTML
+      # 👇 Aquí configuramos la zona horaria para todo este bloque de pasos
+      env:
+        TZ: 'America/Argentina/Buenos_Aires'
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
@@ -31,10 +34,10 @@ jobs:
         # 1. Agregamos el archivo HTML que generó el script de Python
         git add mundial.html
         
-        # 2. Hacemos el commit. Si no cambió nada, el "|| true" evita que falle la Action
-        git commit -m "Actualización automática: $(date)" || echo "No hay cambios en mundial.html para commitear"
+        # 2. Hacemos el commit con la hora local correcta en el mensaje
+        git commit -m "Actualización automática: $(date +'%Y-%m-%d %H:%M:%S')" || echo "No hay cambios en mundial.html para commitear"
         
-        # 3. Traemos tus últimos cambios locales de forma segura (haciendo rebase sobre main)
+        # 3. Traemos tus últimos cambios locales de forma segura
         git pull --rebase origin main
         
         # 4. Subimos todo limpio a GitHub
