@@ -27,7 +27,15 @@ jobs:
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
+        
+        # 1. Agregamos el archivo HTML que generó el script de Python
         git add mundial.html
-        git commit -m "Actualización automática: $(date)" || exit 0
-        git pull --rebase
-        git push
+        
+        # 2. Hacemos el commit. Si no cambió nada, el "|| true" evita que falle la Action
+        git commit -m "Actualización automática: $(date)" || echo "No hay cambios en mundial.html para commitear"
+        
+        # 3. Traemos tus últimos cambios locales de forma segura (haciendo rebase sobre main)
+        git pull --rebase origin main
+        
+        # 4. Subimos todo limpio a GitHub
+        git push origin main
