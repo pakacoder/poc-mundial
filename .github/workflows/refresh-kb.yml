@@ -3,6 +3,7 @@ name: Refresh ElevenLabs KB
 on:
   schedule:
     - cron: '0 * * * *'  # cada hora
+  workflow_dispatch:
 
 jobs:
   refresh:
