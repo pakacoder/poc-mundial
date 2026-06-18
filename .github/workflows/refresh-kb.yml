@@ -1,0 +1,15 @@
+name: Refresh ElevenLabs KB
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # cada hora
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh Knowledge Base
+        run: |
+          curl -X POST \
+            https://api.elevenlabs.io/v1/convai/knowledge-base/${{ secrets.ELEVENLABS_DOC_ID }}/refresh \
+            -H "xi-api-key: ${{ secrets.ELEVENLABS_API_KEY }}"
