@@ -1,51 +1,24 @@
 # -*- coding: utf-8 -*-
 r"""
-generar_mundial_v2.py
+generar_html.py
 =====================
 Generador de base de conocimiento HTML para el Mundial FIFA 2026.
-Lee noticias vía una consulta consolidada de Google News AR (filtrando dominios locales
-argentinos para evitar URLs rotas) y combina con datos embebidos del torneo,
-fases de eliminación directa, cálculo dinámico de suspendidos, plantel de Argentina
-y la grilla de canales de Telecentro Play.
-
-Salida: c:\TLC\26_IA\Mundial\mundial.html
-
-Ejecución: python generar_mundial_v2.py
-
-Windows Task Scheduler (3 veces por día):
-  Trigger 1: 08:00 hs  -> python "c:\TLC\26_IA\Mundial\generar_mundial_v2.py"
-  Trigger 2: 14:00 hs  -> python "c:\TLC\26_IA\Mundial\generar_mundial_v2.py"
-  Trigger 3: 22:30 hs  -> python "c:\TLC\26_IA\Mundial\generar_mundial_v2.py"
-  Start in: c:\TLC\26_IA\Mundial\
+Adaptado para ejecución local y automatizaciones basadas en GitHub Actions.
 """
 
 import sys
-import subprocess
 import datetime
 import html
 import urllib.parse
 import re
-
-# ============================================================
-# INSTALACION AUTOMATICA DE DEPENDENCIAS
-# ============================================================
-def instalar_si_falta(paquete):
-    try:
-        __import__(paquete)
-    except ImportError:
-        print(f"[INFO] Instalando {paquete}...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", paquete, "--quiet"])
-
-instalar_si_falta("feedparser")
-instalar_si_falta("requests")
-
 import requests
 import feedparser
 
 # ============================================================
 # CONFIGURACION
 # ============================================================
-ARCHIVO_SALIDA = r"c:\TLC\26_IA\Mundial\mundial.html"
+# Se utiliza ruta relativa compatible tanto con Windows local como con entornos Linux Cloud
+ARCHIVO_SALIDA = "mundial.html"
 TIMEOUT_RSS = 10
 MAX_NOTICIAS = 15
 
@@ -223,7 +196,7 @@ GOLEADORES = [
     {'jugador': 'OH HYEON-GYU',       'seleccion': 'COREA DEL SUR',      'goles': 1},
     {'jugador': 'JOVO LUKIC',         'seleccion': 'BOSNIA HERZEGOVINA', 'goles': 1},
     {'jugador': 'CYLE LARIN',         'seleccion': 'CANADA',             'goles': 1},
-    {'jugador': 'GIOVANNI REYNA',     'seleccion': 'ESTADOS UNIDOS',     'goles': 1},
+    {'jugador': 'GIOVANNI REYNA',     'seleccion': 'ESTADOS UNIDOS',      'goles': 1},
     {'jugador': 'MAURICIO MAGALHAES', 'seleccion': 'PARAGUAY',           'goles': 1},
 ]
 
@@ -265,19 +238,13 @@ TARJETAS_ROJAS = [
 # ============================================================
 # CONSTANTES: SUSPENDIDOS MANUALES (SOBREESCRITURAS FIFA)
 # ============================================================
-SUSPENDIDOS_MANUALES = [
-    # {'jugador': 'EJEMPLO JUGADOR', 'seleccion': 'SELECCION', 'motivo': 'SUSPENSION ADICIONAL DISCIPLINARIA POR FIFA', 'partidos_restantes': 1}
-]
+SUSPENDIDOS_MANUALES = []
 
 # ============================================================
 # CONSTANTES: LLAVE ELIMINATORIA (ROUND OF 32 ONWARDS)
 # ============================================================
 LLAVE_ELIMINATORIA = {
-    'DIECISEISAVOS DE FINAL (ROUND OF 32)': [
-        # Cruces a definirse al final de la fase de grupos.
-        # Ejemplo de estructura:
-        # {'fecha': '28/06/2026', 'hora': '15:00', 'partido': '1A VS Mejor 3ro C/D/E/F', 'resultado': '', 'canales': 'TyC Sports (106/1018)', 'jugado': False}
-    ],
+    'DIECISEISAVOS DE FINAL (ROUND OF 32)': [],
     'OCTAVOS DE FINAL': [],
     'CUARTOS DE FINAL': [],
     'SEMIFINALES': [],
@@ -420,54 +387,54 @@ FIXTURES = [
 # CONSTANTES: GRILLA TELECENTRO PLAY
 # ============================================================
 GRILLA_TELECENTRO = [
-    {'dia': 'JUE', 'fecha': '11/06', 'hora': '16:00', 'partido': 'MEXICO VS SUDAFRICA',           'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'JUE', 'fecha': '11/06', 'hora': '23:00', 'partido': 'COREA DEL SUR VS CHEQUIA',       'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'VIE', 'fecha': '12/06', 'hora': '22:00', 'partido': 'ESTADOS UNIDOS VS PARAGUAY',     'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'SAB', 'fecha': '13/06', 'hora': '13:00', 'partido': 'QATAR VS SUIZA',                 'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'SAB', 'fecha': '13/06', 'hora': '19:00', 'partido': 'BRASIL VS MARRUECOS',            'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'SAB', 'fecha': '13/06', 'hora': '22:00', 'partido': 'HAITI VS ESCOCIA',               'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '01:00', 'partido': 'AUSTRALIA VS TURQUIA',           'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '17:00', 'partido': 'PAISES BAJOS VS JAPON',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '20:00', 'partido': 'COSTA DE MARFIL VS ECUADOR',     'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '23:00', 'partido': 'SUECIA VS TUNEZ',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'LUN', 'fecha': '15/06', 'hora': '16:00', 'partido': 'BELGICA VS EGIPTO',              'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'LUN', 'fecha': '15/06', 'hora': '19:00', 'partido': 'ARABIA SAUDI VS URUGUAY',        'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'LUN', 'fecha': '15/06', 'hora': '22:00', 'partido': 'RI DE IRAN VS NUEVA ZELANDA',    'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'MAR', 'fecha': '16/06', 'hora': '19:00', 'partido': 'IRAK VS NORUEGA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'JUE', 'fecha': '11/06', 'hora': '16:00', 'partido': 'MEXICO VS SUDAFRICA',           'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'JUE', 'fecha': '11/06', 'hora': '23:00', 'partido': 'COREA DEL SUR VS CHEQUIA',       'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'VIE', 'fecha': '12/06', 'hora': '22:00', 'partido': 'ESTADOS UNIDOS VS PARAGUAY',     'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'SAB', 'fecha': '13/06', 'hora': '13:00', 'partido': 'QATAR VS SUIZA',                 'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'SAB', 'fecha': '13/06', 'hora': '19:00', 'partido': 'BRASIL VS MARRUECOS',            'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'SAB', 'fecha': '13/06', 'hora': '22:00', 'partido': 'HAITI VS ESCOCIA',               'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '01:00', 'partido': 'AUSTRALIA VS TURQUIA',           'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '17:00', 'partido': 'PAISES BAJOS VS JAPON',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '20:00', 'partido': 'COSTA DE MARFIL VS ECUADOR',     'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '23:00', 'partido': 'SUECIA VS TUNEZ',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'LUN', 'fecha': '15/06', 'hora': '16:00', 'partido': 'BELGICA VS EGIPTO',              'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'LUN', 'fecha': '15/06', 'hora': '19:00', 'partido': 'ARABIA SAUDI VS URUGUAY',        'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'LUN', 'fecha': '15/06', 'hora': '22:00', 'partido': 'RI DE IRAN VS NUEVA ZELANDA',    'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MAR', 'fecha': '16/06', 'hora': '19:00', 'partido': 'IRAK VS NORUEGA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
     {'dia': 'MAR', 'fecha': '16/06', 'hora': '22:00', 'partido': 'ARGENTINA VS ARGELIA',           'canales': 'TELEFE (12/1001) + TV PUBLICA (8/999) + TyC Sports (106/1018)', 'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': True},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '01:00', 'partido': 'AUSTRIA VS JORDANIA',            'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '17:00', 'partido': 'INGLATERRA VS CROACIA',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '20:00', 'partido': 'GHANA VS PANAMA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '23:00', 'partido': 'UZBEKISTAN VS COLOMBIA',         'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'JUE', 'fecha': '18/06', 'hora': '13:00', 'partido': 'CHEQUIA VS SUDAFRICA',           'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'JUE', 'fecha': '18/06', 'hora': '16:00', 'partido': 'SUIZA VS BOSNIA HERZEGOVINA',    'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'JUE', 'fecha': '18/06', 'hora': '22:00', 'partido': 'MEXICO VS COREA DEL SUR',        'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'VIE', 'fecha': '19/06', 'hora': '16:00', 'partido': 'ESTADOS UNIDOS VS AUSTRALIA',    'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'VIE', 'fecha': '19/06', 'hora': '19:00', 'partido': 'ESCOCIA VS MARRUECOS',           'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'VIE', 'fecha': '19/06', 'hora': '21:30', 'partido': 'BRASIL VS HAITI',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'SAB', 'fecha': '20/06', 'hora': '14:00', 'partido': 'PAISES BAJOS VS SUECIA',         'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'SAB', 'fecha': '20/06', 'hora': '17:00', 'partido': 'ALEMANIA VS COSTA DE MARFIL',    'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '21/06', 'hora': '13:00', 'partido': 'ESPANA VS ARABIA SAUDI',         'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '21/06', 'hora': '19:00', 'partido': 'URUGUAY VS CABO VERDE',          'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '21/06', 'hora': '22:00', 'partido': 'NUEVA ZELANDA VS EGIPTO',        'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '01:00', 'partido': 'AUSTRIA VS JORDANIA',            'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '17:00', 'partido': 'INGLATERRA VS CROACIA',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '20:00', 'partido': 'GHANA VS PANAMA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '23:00', 'partido': 'UZBEKISTAN VS COLOMBIA',         'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'JUE', 'fecha': '18/06', 'hora': '13:00', 'partido': 'CHEQUIA VS SUDAFRICA',           'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'JUE', 'fecha': '18/06', 'hora': '16:00', 'partido': 'SUIZA VS BOSNIA HERZEGOVINA',    'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'JUE', 'fecha': '18/06', 'hora': '22:00', 'partido': 'MEXICO VS COREA DEL SUR',        'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'VIE', 'fecha': '19/06', 'hora': '16:00', 'partido': 'ESTADOS UNIDOS VS AUSTRALIA',    'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'VIE', 'fecha': '19/06', 'hora': '19:00', 'partido': 'ESCOCIA VS MARRUECOS',            'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'VIE', 'fecha': '19/06', 'hora': '21:30', 'partido': 'BRASIL VS HAITI',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'SAB', 'fecha': '20/06', 'hora': '14:00', 'partido': 'PAISES BAJOS VS SUECIA',          'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'SAB', 'fecha': '20/06', 'hora': '17:00', 'partido': 'ALEMANIA VS COSTA DE MARFIL',    'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '21/06', 'hora': '13:00', 'partido': 'ESPANA VS ARABIA SAUDI',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '21/06', 'hora': '19:00', 'partido': 'URUGUAY VS CABO VERDE',          'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '21/06', 'hora': '22:00', 'partido': 'NUEVA ZELANDA VS EGIPTO',        'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
     {'dia': 'LUN', 'fecha': '22/06', 'hora': '14:00', 'partido': 'ARGENTINA VS AUSTRIA',           'canales': 'TELEFE (12/1001) + TV PUBLICA (8/999) + TyC Sports (106/1018)', 'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': True},
-    {'dia': 'LUN', 'fecha': '22/06', 'hora': '21:00', 'partido': 'NORUEGA VS SENEGAL',             'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'MAR', 'fecha': '23/06', 'hora': '14:00', 'partido': 'PORTUGAL VS UZBEKISTAN',         'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MAR', 'fecha': '23/06', 'hora': '17:00', 'partido': 'INGLATERRA VS GHANA',            'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MAR', 'fecha': '23/06', 'hora': '20:00', 'partido': 'PANAMA VS CROACIA',              'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '16:00', 'partido': 'SUIZA VS CANADA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'ESCOCIA VS BRASIL',              'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'MARRUECOS VS HAITI',             'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '22:00', 'partido': 'SUDAFRICA VS COREA DEL SUR',     'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '17:00', 'partido': 'ECUADOR VS ALEMANIA',            'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '20:00', 'partido': 'JAPON VS SUECIA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'TURQUIA VS ESTADOS UNIDOS',      'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'PARAGUAY VS AUSTRALIA',          'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'VIE', 'fecha': '26/06', 'hora': '16:00', 'partido': 'NORUEGA VS FRANCIA',             'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'VIE', 'fecha': '26/06', 'hora': '21:00', 'partido': 'URUGUAY VS ESPANA',              'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'SAB', 'fecha': '27/06', 'hora': '00:00', 'partido': 'EGIPTO VS RI DE IRAN',           'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
-    {'dia': 'SAB', 'fecha': '27/06', 'hora': '18:00', 'partido': 'PANAMA VS INGLATERRA',           'canales': 'TV PUBLICA (8/999) + TyC Sports (106/1018)',                     'sva': '',                        'argentina': False},
-    {'dia': 'SAB', 'fecha': '27/06', 'hora': '20:30', 'partido': 'RD CONGO VS UZBEKISTAN',         'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'LUN', 'fecha': '22/06', 'hora': '21:00', 'partido': 'NORUEGA VS SENEGAL',             'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MAR', 'fecha': '23/06', 'hora': '14:00', 'partido': 'PORTUGAL VS UZBEKISTAN',         'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MAR', 'fecha': '23/06', 'hora': '17:00', 'partido': 'INGLATERRA VS GHANA',            'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MAR', 'fecha': '23/06', 'hora': '20:00', 'partido': 'PANAMA VS CROACIA',              'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '16:00', 'partido': 'SUIZA VS CANADA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'ESCOCIA VS BRASIL',              'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'MARRUECOS VS HAITI',              'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '22:00', 'partido': 'SUDAFRICA VS COREA DEL SUR',     'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '17:00', 'partido': 'ECUADOR VS ALEMANIA',            'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '20:00', 'partido': 'JAPON VS SUECIA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'TURQUIA VS ESTADOS UNIDOS',      'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'PARAGUAY VS AUSTRALIA',          'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'VIE', 'fecha': '26/06', 'hora': '16:00', 'partido': 'NORUEGA VS FRANCIA',             'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'VIE', 'fecha': '26/06', 'hora': '21:00', 'partido': 'URUGUAY VS ESPANA',              'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'SAB', 'fecha': '27/06', 'hora': '00:00', 'partido': 'EGIPTO VS RI DE IRAN',           'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'SAB', 'fecha': '27/06', 'hora': '18:00', 'partido': 'PANAMA VS INGLATERRA',           'canales': 'TV PUBLICA (8/999) + TyC Sports (106/1018)',      'sva': '',                         'argentina': False},
+    {'dia': 'SAB', 'fecha': '27/06', 'hora': '20:30', 'partido': 'RD CONGO VS UZBEKISTAN',         'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
     {'dia': 'SAB', 'fecha': '27/06', 'hora': '23:00', 'partido': 'JORDANIA VS ARGENTINA',          'canales': 'TELEFE (12/1001) + TV PUBLICA (8/999) + TyC Sports (106/1018)', 'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': True},
 ]
 
@@ -575,7 +542,6 @@ def obtener_noticias_rss():
             if hasattr(entry, 'source') and entry.source:
                 fuente = entry.source.get('title', 'Medio Local')
             else:
-                # Intentar extraer la fuente al final del título (ej: "Titular - Infobae")
                 partes_titulo = titulo.rsplit(" - ", 1)
                 if len(partes_titulo) > 1:
                     fuente = partes_titulo[1].strip()
@@ -691,7 +657,7 @@ def obtener_suspendidos():
 # SECCIONES HTML
 # ============================================================
 def sec(nombre):
-    return f"\n<!-- INICIO {nombre} -->\n", f"\n<!-- FIN {nombre} -->\n"
+    return f"\n\n", f"\n\n"
 
 
 def bloque(nombre, contenido):
@@ -1033,7 +999,7 @@ def generar_html():
     hora_actual = ahora.time()
     timestamp = ahora.strftime("%d/%m/%Y %H:%M:%S")
 
-    print(f"[INFO] Iniciando generacion de mundial.html (v2)")
+    print(f"[INFO] Iniciando generacion de mundial.html")
     print(f"[INFO] Fecha/hora: {timestamp} ARG")
 
     print("[INFO] Obteniendo noticias via RSS unificado...")
@@ -1089,8 +1055,8 @@ def generar_html():
     partes.append(f"""
 <hr>
 <p><em>FIN DEL DOCUMENTO - MUNDIAL FIFA 2026 BASE DE CONOCIMIENTO</em></p>
-<p><em>GENERADO: {e(timestamp)} ARG | SCRIPT: generar_mundial_v2.py</em></p>
-<p><em>PROXIMA ACTUALIZACION: 3 VECES POR DIA (08:00, 14:00, 22:30 ARG)</em></p>
+<p><em>GENERADO: {e(timestamp)} ARG</em></p>
+<p><em>PROXIMA ACTUALIZACION: AUTOMATICA HORARIA (GITHUB ACTIONS CRON)</em></p>
 </body>
 </html>
 """)
@@ -1099,9 +1065,8 @@ def generar_html():
     with open(ARCHIVO_SALIDA, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"[OK] Archivo generado: {ARCHIVO_SALIDA}")
+    print(f"[OK] Archivo generado con éxito en ruta relativa: {ARCHIVO_SALIDA}")
     print(f"[OK] Tamanio: {len(html_content):,} bytes / {len(html_content.splitlines())} lineas")
-    print(f"[OK] Noticias RSS unificadas incluidas: {len(noticias)}")
     return True
 
 
@@ -1111,31 +1076,9 @@ def generar_html():
 if __name__ == "__main__":
     try:
         generar_html()
-        print("\n[LISTO] mundial.html generado correctamente desde version 2.")
+        print("\n[LISTO] mundial.html generado correctamente.")
     except Exception as ex:
         print(f"\n[ERROR CRITICO] {ex}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
-# ============================================================
-# WINDOWS TASK SCHEDULER - CONFIGURACION RECOMENDADA (v2)
-# ============================================================
-#
-# Para ejecutar 3 veces por dia:
-#
-# Opcion A - Interfaz grafica (taskschd.msc):
-#   1. Abrir "Programador de Tareas"
-#   2. Crear tarea -> nombre: "GenerarMundialHTML"
-#   3. Accion -> Iniciar programa:
-#      Programa:   python
-#      Argumentos: "c:\TLC\26_IA\Mundial\generar_mundial_v2.py"
-#      Iniciar en: c:\TLC\26_IA\Mundial\
-#   4. Agregar 3 disparadores diarios: 08:00, 14:00, 22:30
-#
-# Opcion B - CMD como Administrador (schtasks):
-#   schtasks /create /tn "MundialHTML_0800" /tr "python \"c:\TLC\26_IA\Mundial\generar_mundial_v2.py\"" /sc DAILY /st 08:00 /f
-#   schtasks /create /tn "MundialHTML_1400" /tr "python \"c:\TLC\26_IA\Mundial\generar_mundial_v2.py\"" /sc DAILY /st 14:00 /f
-#   schtasks /create /tn "MundialHTML_2230" /tr "python \"c:\TLC\26_IA\Mundial\generar_mundial_v2.py\"" /sc DAILY /st 22:30 /f
-#
-# ============================================================
