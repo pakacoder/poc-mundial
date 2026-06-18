@@ -10,6 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      
+    # 👇 CONFIGURACIÓN GLOBAL: Esto obliga a que TODO el entorno (Python, comandos, Git) use hora Argentina
+    env:
+      TZ: 'America/Argentina/Buenos_Aires'
+      
     steps:
     - uses: actions/checkout@v4
     
@@ -24,9 +29,6 @@ jobs:
       run: python generar_html.py
       
     - name: Auto Commit y Push del HTML
-      # 👇 Aquí configuramos la zona horaria para todo este bloque de pasos
-      env:
-        TZ: 'America/Argentina/Buenos_Aires'
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
