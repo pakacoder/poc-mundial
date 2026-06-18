@@ -12,12 +12,19 @@ jobs:
       contents: write
     steps:
     - uses: actions/checkout@v4
+    
     - uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-    - run: pip install pytz
-    - run: python generar_html.py
-    - run: |
+        
+    - name: Instalar Dependencias del Mundial
+      run: pip install requests feedparser
+
+    - name: Generar Base de Conocimiento
+      run: python generar_html.py
+      
+    - name: Auto Commit y Push del HTML
+      run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
         git add mundial.html
