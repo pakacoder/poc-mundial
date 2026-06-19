@@ -1,26 +1,120 @@
 # -*- coding: utf-8 -*-
 r"""
-generar_html.py
+generar_html.py (v5)
 =====================
 Generador de base de conocimiento HTML para el Mundial FIFA 2026.
-Adaptado para ejecución local y automatizaciones basadas en GitHub Actions.
+VERSION 5: Refina la Directiva 3 de RAG para partidos en curso o recientes.
+Adaptado para ejecución en entornos cloud (GitHub Actions) y locales con Timezone AR.
 """
 
 import sys
+import subprocess
 import datetime
 import html
 import urllib.parse
 import re
+import time
+
+# ============================================================
+# INSTALACION AUTOMATICA DE DEPENDENCIAS
+# ============================================================
+def instalar_si_falta(paquete):
+    try:
+        __import__(paquete)
+    except ImportError:
+        print(f"[INFO] Instalando {paquete}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", paquete, "--quiet"])
+
+instalar_si_falta("feedparser")
+instalar_si_falta("requests")
+instalar_si_falta("pytz")  # Necesario para manejar la zona horaria de Argentina en Actions
+
 import requests
 import feedparser
+import pytz
 
 # ============================================================
 # CONFIGURACION
 # ============================================================
-# Se utiliza ruta relativa compatible tanto con Windows local como con entornos Linux Cloud
+# Se usa ruta relativa compatible con GitHub Actions y ejecución local
 ARCHIVO_SALIDA = "mundial.html"
 TIMEOUT_RSS = 10
 MAX_NOTICIAS = 15
+
+# ============================================================
+# ESPN API: CONFIGURACION
+# ============================================================
+ESPN_LEAGUE_SLUG = "fifa.world"
+ESPN_BASE_URL = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{ESPN_LEAGUE_SLUG}"
+ESPN_SCOREBOARD_URL = f"{ESPN_BASE_URL}/scoreboard"
+ESPN_TIMEOUT = 12
+ESPN_DELAY_ENTRE_REQUESTS = 0.3
+FECHA_INICIO_TORNEO = datetime.date(2026, 6, 11)
+
+# ============================================================
+# ESPN API: MAPEO DE NOMBRES DE EQUIPOS
+# ============================================================
+ESPN_NOMBRE_EQUIPO = {
+    'Mexico': 'MEXICO', 'México': 'MEXICO',
+    'South Africa': 'SUDAFRICA',
+    'South Korea': 'COREA DEL SUR', 'Korea Republic': 'COREA DEL SUR', 'Korea Rep.': 'COREA DEL SUR',
+    'Czechia': 'CHEQUIA', 'Czech Republic': 'CHEQUIA',
+    'Canada': 'CANADA',
+    'Bosnia and Herzegovina': 'BOSNIA HERZEGOVINA', 'Bosnia-Herzegovina': 'BOSNIA HERZEGOVINA',
+    'Bosnia & Herzegovina': 'BOSNIA HERZEGOVINA',
+    'Qatar': 'QATAR',
+    'Switzerland': 'SUIZA',
+    'Brazil': 'BRASIL',
+    'Morocco': 'MARRUECOS',
+    'Haiti': 'HAITI',
+    'Scotland': 'ESCOCIA',
+    'United States': 'ESTADOS UNIDOS', 'USA': 'ESTADOS UNIDOS', 'US': 'ESTADOS UNIDOS',
+    'Paraguay': 'PARAGUAY',
+    'Australia': 'AUSTRALIA',
+    'Turkey': 'TURQUIA', 'Türkiye': 'TURQUIA',
+    'Germany': 'ALEMANIA',
+    'Curaçao': 'CURAZAO', 'Curacao': 'CURAZAO',
+    "Côte d'Ivoire": 'COSTA DE MARFIL', 'Ivory Coast': 'COSTA DE MARFIL',
+    'Ecuador': 'ECUADOR',
+    'Netherlands': 'PAISES BAJOS',
+    'Japan': 'JAPON',
+    'Sweden': 'SUECIA',
+    'Tunisia': 'TUNEZ',
+    'Belgium': 'BELGICA',
+    'Egypt': 'EGIPTO',
+    'Iran': 'IRAN', 'IR Iran': 'IRAN',
+    'New Zealand': 'NUEVA ZELANDA',
+    'Spain': 'ESPANA',
+    'Cape Verde': 'CABO VERDE', 'Cabo Verde': 'CABO VERDE',
+    'Saudi Arabia': 'ARABIA SAUDI',
+    'Uruguay': 'URUGUAY',
+    'France': 'FRANCIA',
+    'Senegal': 'SENEGAL',
+    'Iraq': 'IRAK',
+    'Norway': 'NORUEGA',
+    'Argentina': 'ARGENTINA',
+    'Algeria': 'ARGELIA',
+    'Austria': 'AUSTRIA',
+    'Jordan': 'JORDANIA',
+    'Portugal': 'PORTUGAL',
+    'DR Congo': 'RD CONGO', 'Congo DR': 'RD CONGO', 'Dem. Rep. Congo': 'RD CONGO',
+    'Uzbekistan': 'UZBEKISTAN',
+    'Colombia': 'COLOMBIA',
+    'England': 'INGLATERRA',
+    'Croatia': 'CROACIA',
+    'Ghana': 'GHANA',
+    'Panama': 'PANAMA',
+}
+
+def mapear_equipo_espn(nombre_espn):
+    if not nombre_espn:
+        return 'DESCONOCIDO'
+    if nombre_espn in ESPN_NOMBRE_EQUIPO:
+        return ESPN_NOMBRE_EQUIPO[nombre_espn]
+    for k, v in ESPN_NOMBRE_EQUIPO.items():
+        if k.lower() == nombre_espn.lower():
+            return v
+    return nombre_espn.upper()
 
 # ============================================================
 # CONSTANTES: GRUPOS
@@ -41,7 +135,7 @@ GRUPOS = {
 }
 
 # ============================================================
-# CONSTANTES: TABLA DE POSICIONES
+# CONSTANTES: TABLA DE POSICIONES (FALLBACK)
 # ============================================================
 POSICIONES = {
     'A': [
@@ -119,7 +213,7 @@ POSICIONES = {
 }
 
 # ============================================================
-# CONSTANTES: RESULTADOS
+# CONSTANTES: RESULTADOS (FALLBACK)
 # ============================================================
 RESULTADOS = [
     {
@@ -159,7 +253,7 @@ RESULTADOS = [
         'goles_local': 4, 'goles_visitante': 1,
         'estadio': 'SOFI STADIUM, INGLEWOOD, CALIFORNIA, USA',
         'goles_detalle': [
-            'MIN 07: DAMIAN BOBADILLA (PAR) - AUTOGOL',
+            'MIN 07: DAMIAN BOBADILLA (PARAGUAY) (AUTOGOL)',
             'MIN 31: FOLARIN BALOGUN (USA) - ASISTENCIA: CHRISTIAN PULISIC',
             'MIN 45+5: FOLARIN BALOGUN (USA)',
             'MIN 73: MAURICIO MAGALHAES (PAR)',
@@ -185,7 +279,7 @@ RESULTADOS = [
 ]
 
 # ============================================================
-# CONSTANTES: GOLEADORES
+# CONSTANTES: GOLEADORES (FALLBACK)
 # ============================================================
 GOLEADORES = [
     {'jugador': 'FOLARIN BALOGUN',    'seleccion': 'ESTADOS UNIDOS',    'goles': 2},
@@ -196,12 +290,12 @@ GOLEADORES = [
     {'jugador': 'OH HYEON-GYU',       'seleccion': 'COREA DEL SUR',      'goles': 1},
     {'jugador': 'JOVO LUKIC',         'seleccion': 'BOSNIA HERZEGOVINA', 'goles': 1},
     {'jugador': 'CYLE LARIN',         'seleccion': 'CANADA',             'goles': 1},
-    {'jugador': 'GIOVANNI REYNA',     'seleccion': 'ESTADOS UNIDOS',      'goles': 1},
+    {'jugador': 'GIOVANNI REYNA',     'seleccion': 'ESTADOS UNIDOS',     'goles': 1},
     {'jugador': 'MAURICIO MAGALHAES', 'seleccion': 'PARAGUAY',           'goles': 1},
 ]
 
 # ============================================================
-# CONSTANTES: VALLA MENOS VENCIDA
+# CONSTANTES: VALLA MENOS VENCIDA (FALLBACK)
 # ============================================================
 VALLA_MENOS_VENCIDA = [
     {'equipo': 'MEXICO',             'pj': 1, 'goles_recibidos': 0},
@@ -215,7 +309,7 @@ VALLA_MENOS_VENCIDA = [
 ]
 
 # ============================================================
-# CONSTANTES: TARJETAS
+# CONSTANTES: TARJETAS (FALLBACK)
 # ============================================================
 TARJETAS_AMARILLAS = [
     {'jugador': 'TEBOHO MOKOENA', 'seleccion': 'SUDAFRICA',
@@ -235,13 +329,10 @@ TARJETAS_ROJAS = [
      'tipo': 'ROJA DIRECTA', 'motivo': 'FALTA SOBRE KHULISO MUDAU'},
 ]
 
-# ============================================================
-# CONSTANTES: SUSPENDIDOS MANUALES (SOBREESCRITURAS FIFA)
-# ============================================================
 SUSPENDIDOS_MANUALES = []
 
 # ============================================================
-# CONSTANTES: LLAVE ELIMINATORIA (ROUND OF 32 ONWARDS)
+# CONSTANTES: LLAVE ELIMINATORIA
 # ============================================================
 LLAVE_ELIMINATORIA = {
     'DIECISEISAVOS DE FINAL (ROUND OF 32)': [],
@@ -387,123 +478,357 @@ FIXTURES = [
 # CONSTANTES: GRILLA TELECENTRO PLAY
 # ============================================================
 GRILLA_TELECENTRO = [
-    {'dia': 'JUE', 'fecha': '11/06', 'hora': '16:00', 'partido': 'MEXICO VS SUDAFRICA',           'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'JUE', 'fecha': '11/06', 'hora': '23:00', 'partido': 'COREA DEL SUR VS CHEQUIA',       'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'VIE', 'fecha': '12/06', 'hora': '22:00', 'partido': 'ESTADOS UNIDOS VS PARAGUAY',     'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'SAB', 'fecha': '13/06', 'hora': '13:00', 'partido': 'QATAR VS SUIZA',                 'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'SAB', 'fecha': '13/06', 'hora': '19:00', 'partido': 'BRASIL VS MARRUECOS',            'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'SAB', 'fecha': '13/06', 'hora': '22:00', 'partido': 'HAITI VS ESCOCIA',               'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '01:00', 'partido': 'AUSTRALIA VS TURQUIA',           'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '17:00', 'partido': 'PAISES BAJOS VS JAPON',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '20:00', 'partido': 'COSTA DE MARFIL VS ECUADOR',     'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '14/06', 'hora': '23:00', 'partido': 'SUECIA VS TUNEZ',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'LUN', 'fecha': '15/06', 'hora': '16:00', 'partido': 'BELGICA VS EGIPTO',              'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'LUN', 'fecha': '15/06', 'hora': '19:00', 'partido': 'ARABIA SAUDI VS URUGUAY',        'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'LUN', 'fecha': '15/06', 'hora': '22:00', 'partido': 'RI DE IRAN VS NUEVA ZELANDA',    'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'MAR', 'fecha': '16/06', 'hora': '19:00', 'partido': 'IRAK VS NORUEGA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'JUE', 'fecha': '11/06', 'hora': '16:00', 'partido': 'MEXICO VS SUDAFRICA',           'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'JUE', 'fecha': '11/06', 'hora': '23:00', 'partido': 'COREA DEL SUR VS CHEQUIA',       'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'VIE', 'fecha': '12/06', 'hora': '22:00', 'partido': 'ESTADOS UNIDOS VS PARAGUAY',     'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'SAB', 'fecha': '13/06', 'hora': '13:00', 'partido': 'QATAR VS SUIZA',                 'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'SAB', 'fecha': '13/06', 'hora': '19:00', 'partido': 'BRASIL VS MARRUECOS',            'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'SAB', 'fecha': '13/06', 'hora': '22:00', 'partido': 'HAITI VS ESCOCIA',               'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '01:00', 'partido': 'AUSTRALIA VS TURQUIA',           'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '17:00', 'partido': 'PAISES BAJOS VS JAPON',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '20:00', 'partido': 'COSTA DE MARFIL VS ECUADOR',     'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '14/06', 'hora': '23:00', 'partido': 'SUECIA VS TUNEZ',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'LUN', 'fecha': '15/06', 'hora': '16:00', 'partido': 'BELGICA VS EGIPTO',              'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'LUN', 'fecha': '15/06', 'hora': '19:00', 'partido': 'ARABIA SAUDI VS URUGUAY',        'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'LUN', 'fecha': '15/06', 'hora': '22:00', 'partido': 'RI DE IRAN VS NUEVA ZELANDA',    'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MAR', 'fecha': '16/06', 'hora': '19:00', 'partido': 'IRAK VS NORUEGA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
     {'dia': 'MAR', 'fecha': '16/06', 'hora': '22:00', 'partido': 'ARGENTINA VS ARGELIA',           'canales': 'TELEFE (12/1001) + TV PUBLICA (8/999) + TyC Sports (106/1018)', 'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': True},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '01:00', 'partido': 'AUSTRIA VS JORDANIA',            'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '17:00', 'partido': 'INGLATERRA VS CROACIA',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '20:00', 'partido': 'GHANA VS PANAMA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'MIE', 'fecha': '17/06', 'hora': '23:00', 'partido': 'UZBEKISTAN VS COLOMBIA',         'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'JUE', 'fecha': '18/06', 'hora': '13:00', 'partido': 'CHEQUIA VS SUDAFRICA',           'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'JUE', 'fecha': '18/06', 'hora': '16:00', 'partido': 'SUIZA VS BOSNIA HERZEGOVINA',    'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'JUE', 'fecha': '18/06', 'hora': '22:00', 'partido': 'MEXICO VS COREA DEL SUR',        'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'VIE', 'fecha': '19/06', 'hora': '16:00', 'partido': 'ESTADOS UNIDOS VS AUSTRALIA',    'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'VIE', 'fecha': '19/06', 'hora': '19:00', 'partido': 'ESCOCIA VS MARRUECOS',            'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'VIE', 'fecha': '19/06', 'hora': '21:30', 'partido': 'BRASIL VS HAITI',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'SAB', 'fecha': '20/06', 'hora': '14:00', 'partido': 'PAISES BAJOS VS SUECIA',          'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'SAB', 'fecha': '20/06', 'hora': '17:00', 'partido': 'ALEMANIA VS COSTA DE MARFIL',    'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '21/06', 'hora': '13:00', 'partido': 'ESPANA VS ARABIA SAUDI',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '21/06', 'hora': '19:00', 'partido': 'URUGUAY VS CABO VERDE',          'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'DOM', 'fecha': '21/06', 'hora': '22:00', 'partido': 'NUEVA ZELANDA VS EGIPTO',        'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '01:00', 'partido': 'AUSTRIA VS JORDANIA',            'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '17:00', 'partido': 'INGLATERRA VS CROACIA',          'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '20:00', 'partido': 'GHANA VS PANAMA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MIE', 'fecha': '17/06', 'hora': '23:00', 'partido': 'UZBEKISTAN VS COLOMBIA',         'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'JUE', 'fecha': '18/06', 'hora': '13:00', 'partido': 'CHEQUIA VS SUDAFRICA',           'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'JUE', 'fecha': '18/06', 'hora': '16:00', 'partido': 'SUIZA VS BOSNIA HERZEGOVINA',    'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'JUE', 'fecha': '18/06', 'hora': '22:00', 'partido': 'MEXICO VS COREA DEL SUR',        'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'VIE', 'fecha': '19/06', 'hora': '16:00', 'partido': 'ESTADOS UNIDOS VS AUSTRALIA',    'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'VIE', 'fecha': '19/06', 'hora': '19:00', 'partido': 'ESCOCIA VS MARRUECOS',           'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'VIE', 'fecha': '19/06', 'hora': '21:30', 'partido': 'BRASIL VS HAITI',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'SAB', 'fecha': '20/06', 'hora': '14:00', 'partido': 'PAISES BAJOS VS SUECIA',         'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'SAB', 'fecha': '20/06', 'hora': '17:00', 'partido': 'ALEMANIA VS COSTA DE MARFIL',    'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '21/06', 'hora': '13:00', 'partido': 'ESPANA VS ARABIA SAUDI',         'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '21/06', 'hora': '19:00', 'partido': 'URUGUAY VS CABO VERDE',          'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'DOM', 'fecha': '21/06', 'hora': '22:00', 'partido': 'NUEVA ZELANDA VS EGIPTO',        'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
     {'dia': 'LUN', 'fecha': '22/06', 'hora': '14:00', 'partido': 'ARGENTINA VS AUSTRIA',           'canales': 'TELEFE (12/1001) + TV PUBLICA (8/999) + TyC Sports (106/1018)', 'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': True},
-    {'dia': 'LUN', 'fecha': '22/06', 'hora': '21:00', 'partido': 'NORUEGA VS SENEGAL',             'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'MAR', 'fecha': '23/06', 'hora': '14:00', 'partido': 'PORTUGAL VS UZBEKISTAN',         'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MAR', 'fecha': '23/06', 'hora': '17:00', 'partido': 'INGLATERRA VS GHANA',            'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MAR', 'fecha': '23/06', 'hora': '20:00', 'partido': 'PANAMA VS CROACIA',              'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '16:00', 'partido': 'SUIZA VS CANADA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'ESCOCIA VS BRASIL',              'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'MARRUECOS VS HAITI',              'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'MIE', 'fecha': '24/06', 'hora': '22:00', 'partido': 'SUDAFRICA VS COREA DEL SUR',     'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '17:00', 'partido': 'ECUADOR VS ALEMANIA',            'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '20:00', 'partido': 'JAPON VS SUECIA',                'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'TURQUIA VS ESTADOS UNIDOS',      'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'PARAGUAY VS AUSTRALIA',          'canales': 'TELEFE (12/1001)',                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'VIE', 'fecha': '26/06', 'hora': '16:00', 'partido': 'NORUEGA VS FRANCIA',             'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'VIE', 'fecha': '26/06', 'hora': '21:00', 'partido': 'URUGUAY VS ESPANA',              'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
-    {'dia': 'SAB', 'fecha': '27/06', 'hora': '00:00', 'partido': 'EGIPTO VS RI DE IRAN',           'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
-    {'dia': 'SAB', 'fecha': '27/06', 'hora': '18:00', 'partido': 'PANAMA VS INGLATERRA',           'canales': 'TV PUBLICA (8/999) + TyC Sports (106/1018)',      'sva': '',                         'argentina': False},
-    {'dia': 'SAB', 'fecha': '27/06', 'hora': '20:30', 'partido': 'RD CONGO VS UZBEKISTAN',         'canales': 'TyC Sports (106/1018)',                           'sva': '',                         'argentina': False},
+    {'dia': 'LUN', 'fecha': '22/06', 'hora': '21:00', 'partido': 'NORUEGA VS SENEGAL',             'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MAR', 'fecha': '23/06', 'hora': '14:00', 'partido': 'PORTUGAL VS UZBEKISTAN',         'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MAR', 'fecha': '23/06', 'hora': '17:00', 'partido': 'INGLATERRA VS GHANA',            'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MAR', 'fecha': '23/06', 'hora': '20:00', 'partido': 'PANAMA VS CROACIA',              'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '16:00', 'partido': 'SUIZA VS CANADA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'ESCOCIA VS BRASIL',              'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '19:00', 'partido': 'MARRUECOS VS HAITI',             'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'MIE', 'fecha': '24/06', 'hora': '22:00', 'partido': 'SUDAFRICA VS COREA DEL SUR',     'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '17:00', 'partido': 'ECUADOR VS ALEMANIA',            'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '20:00', 'partido': 'JAPON VS SUECIA',                'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'TURQUIA VS ESTADOS UNIDOS',      'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'JUE', 'fecha': '25/06', 'hora': '23:00', 'partido': 'PARAGUAY VS AUSTRALIA',          'canales': 'TELEFE (12/1001)',                                               'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'VIE', 'fecha': '26/06', 'hora': '16:00', 'partido': 'NORUEGA VS FRANCIA',             'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'VIE', 'fecha': '26/06', 'hora': '21:00', 'partido': 'URUGUAY VS ESPANA',              'canales': 'TELEFE (12/1001) + TyC Sports (106/1018)',                       'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': False},
+    {'dia': 'SAB', 'fecha': '27/06', 'hora': '00:00', 'partido': 'EGIPTO VS RI DE IRAN',           'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
+    {'dia': 'SAB', 'fecha': '27/06', 'hora': '18:00', 'partido': 'PANAMA VS INGLATERRA',           'canales': 'TV PUBLICA (8/999) + TyC Sports (106/1018)',                     'sva': '',                        'argentina': False},
+    {'dia': 'SAB', 'fecha': '27/06', 'hora': '20:30', 'partido': 'RD CONGO VS UZBEKISTAN',         'canales': 'TyC Sports (106/1018)',                                          'sva': '',                        'argentina': False},
     {'dia': 'SAB', 'fecha': '27/06', 'hora': '23:00', 'partido': 'JORDANIA VS ARGENTINA',          'canales': 'TELEFE (12/1001) + TV PUBLICA (8/999) + TyC Sports (106/1018)', 'sva': 'DISNEY+ PREMIUM $23.999', 'argentina': True},
 ]
 
 # ============================================================
-# CONSTANTES: CONSULTA RSS UNIFICADA (GOOGLE NEWS FILTRADO)
+# CONSTANTES: CONSULTA RSS UNIFICADA
 # ============================================================
 QUERY_RSS_UNIFICADA = "seleccion argentina mundial 2026 (site:ole.com.ar OR site:clarin.com OR site:lanacion.com.ar OR site:infobae.com OR site:tycsports.com)"
 
 # ============================================================
-# CONSTANTES: FAQ
+# ESPN API: PETICION GENERAL
 # ============================================================
-FAQ = [
-    ('CUANDO DEBUTA ARGENTINA EN EL MUNDIAL 2026?',
-     'ARGENTINA DEBUTA EL MARTES 16 DE JUNIO DE 2026 A LAS 22:00 (HORA ARGENTINA) FRENTE A ARGELIA EN KANSAS CITY, USA.'),
-    ('EN QUE GRUPO ESTA ARGENTINA?',
-     'ARGENTINA INTEGRA EL GRUPO J JUNTO A ARGELIA, AUSTRIA Y JORDANIA.'),
-    ('CUANTOS PARTIDOS JUEGA ARGENTINA EN LA FASE DE GRUPOS?',
-     'ARGENTINA JUEGA 3 PARTIDOS: VS ARGELIA (16/06 A LAS 22:00), VS AUSTRIA (22/06 A LAS 14:00) Y VS JORDANIA (27/06 A LAS 23:00).'),
-    ('QUIEN ES EL DIRECTOR TECNICO DE ARGENTINA?',
-     'LIONEL SCALONI ES EL DT DE LA SELECCION ARGENTINA.'),
-    ('QUIEN ES EL CAPITAN DE ARGENTINA?',
-     'LIONEL MESSI ES EL CAPITAN. ES SU SEXTO Y POSIBLEMENTE ULTIMO MUNDIAL.'),
-    ('POR QUE CANAL SE VE ARGENTINA EN EL MUNDIAL?',
-     'LOS PARTIDOS DE ARGENTINA SE VEN POR TELEFE (CH 12 / 1001 HD), TV PUBLICA (CH 8 / 999 HD) Y TYC SPORTS (CH 106 / 1018 HD). TAMBIEN POR DISNEY+ PREMIUM ($23.999/MES). EN TELECENTRO PLAY LOS 3 PARTIDOS TIENEN COBERTURA MULTIPLE.'),
-    ('A QUE HORA ES EL PARTIDO DE ARGENTINA VS ARGELIA?',
-     'EL MARTES 16 DE JUNIO DE 2026 A LAS 22:00 HORA ARGENTINA. EN KANSAS CITY, USA.'),
-    ('A QUE HORA ES EL PARTIDO DE ARGENTINA VS AUSTRIA?',
-     'EL LUNES 22 DE JUNIO DE 2026 A LAS 14:00 HORA ARGENTINA. EN DALLAS, USA.'),
-    ('A QUE HORA ES EL PARTIDO DE JORDANIA VS ARGENTINA?',
-     'EL SABADO 27 DE JUNIO DE 2026 A LAS 23:00 HORA ARGENTINA. EN DALLAS, USA.'),
-    ('CUANTOS EQUIPOS PARTICIPAN EN EL MUNDIAL 2026?',
-     '48 SELECCIONES PARTICIPAN EN EL MUNDIAL 2026, DISTRIBUIDAS EN 12 GRUPOS DE 4 EQUIPOS.'),
-    ('COMO ES EL FORMATO DEL MUNDIAL 2026?',
-     'FASE DE GRUPOS: 12 GRUPOS DE 4 EQUIPOS. CLASIFICAN LOS 2 PRIMEROS DE CADA GRUPO MAS LOS 8 MEJORES TERCEROS (32 EQUIPOS EN TOTAL A OCTAVOS). LUEGO ELIMINACION DIRECTA HASTA LA FINAL.'),
-    ('DONDE SE JUEGA EL MUNDIAL 2026?',
-     'EN ESTADOS UNIDOS, MEXICO Y CANADA. ES EL PRIMER MUNDIAL EN 3 PAISES. LA FINAL SE JUEGA EN NEW YORK/NEW JERSEY EL 19 DE JULIO DE 2026.'),
-    ('CUANDO TERMINA EL MUNDIAL 2026?',
-     'LA FINAL ES EL 19 DE JULIO DE 2026 EN EL METLIFE STADIUM, NEW YORK/NEW JERSEY.'),
-    ('QUIEN ES EL MAXIMO GOLEADOR DEL MUNDIAL?',
-     'AL 13/06: FOLARIN BALOGUN (USA) CON 2 GOLES. VARIOS JUGADORES CON 1 GOL: QUINONES Y JIMENEZ (MEX), KREJCI (CZE), HWANG INBEOM Y OH HYEON-GYU (KOR), LUKIC (BIH), LARIN (CAN), G. REYNA (USA), MAGALHAES (PAR).'),
-    ('QUE PARTIDOS SE JUGARON HASTA AHORA?',
-     'AL 13/06: MEXICO 2-0 SUDAFRICA (Grp A), COREA DEL SUR 2-1 CHEQUIA (Grp A), ESTADOS UNIDOS 4-1 PARAGUAY (Grp D), CANADA 1-1 BOSNIA HERZEGOVINA (Grp B).'),
-    ('DONDE JUEGA ARGENTINA LOS PARTIDOS DE LA FASE DE GRUPOS?',
-     'PARTIDO 1 (VS ARGELIA): KANSAS CITY, USA. PARTIDO 2 (VS AUSTRIA) Y PARTIDO 3 (VS JORDANIA): DALLAS, USA.'),
-    ('QUE CANAL ES TELEFE EN TELECENTRO?',
-     'TELEFE ESTA EN EL CANAL 12 (SD) Y CANAL 1001 (HD) EN TELECENTRO PLAY.'),
-    ('QUE CANAL ES TYC SPORTS EN TELECENTRO?',
-     'TYC SPORTS ESTA EN EL CANAL 106 (SD) Y CANAL 1018 (HD) EN TELECENTRO PLAY.'),
-    ('QUE CANAL ES TV PUBLICA EN TELECENTRO?',
-     'TV PUBLICA ESTA EN EL CANAL 8 (SD) Y CANAL 999 (HD) EN TELECENTRO PLAY.'),
-    ('CUANTO CUESTA DISNEY PLUS PREMIUM EN TELECENTRO?',
-     'DISNEY+ PREMIUM CUESTA $23.999 ARS POR MES EN TELECENTRO PLAY.'),
-    ('CUANTOS JUGADORES LLEVA ARGENTINA AL MUNDIAL?',
-     'ARGENTINA LLEVA 26 JUGADORES: 3 ARQUEROS, 8 DEFENSORES, 9 MEDIOCAMPISTAS Y 6 DELANTEROS. BALERDI DIO DE BAJA POR LESION.'),
-    ('TIENE TYC SPORTS TODOS LOS PARTIDOS DEL MUNDIAL?',
-     'TYC SPORTS TRANSMITE LA MAYORIA DE LOS PARTIDOS. PARA LOS PARTIDOS DE ARGENTINA, SE SUMA TELEFE Y TV PUBLICA (SEÑAL ABIERTA). VER LA GRILLA COMPLETA EN LA SECCION TRANSMISIONES TELECENTRO PLAY.'),
-    ('DONDE ESTA CONCENTRADA ARGENTINA?',
-     'ARGENTINA ESTA CONCENTRADA EN EL COMPASS MINERALS NATIONAL PERFORMANCE CENTER, KANSAS CITY, USA.'),
-    ('QUIEN ES EL SUBCAPITAN DE ARGENTINA?',
-     'NICOLAS OTAMENDI ES EL SUBCAPITAN DE LA SELECCION ARGENTINA.'),
-    ('CUAL ES EL RESULTADO DEL PRIMER PARTIDO DEL MUNDIAL?',
-     'EL PRIMER PARTIDO FUE MEXICO 2-0 SUDAFRICA, EL 11/06/2026 EN EL ESTADIO AZTECA. SUDAFRICA TERMINO CON 9 JUGADORES.'),
-]
+def _espn_request(url, params=None):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=ESPN_TIMEOUT, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as ex:
+        print(f"  [ESPN] Error en request a {url}: {ex}")
+    return None
+
+def parse_date(date_str):
+    if not date_str:
+        return None
+    clean = date_str.replace('Z', '').split('+')[0].split('.')[0]
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.datetime.strptime(clean, fmt)
+        except ValueError:
+            pass
+    return None
+
+def obtener_grupo_de_equipo(equipo):
+    for gp, eq_list in GRUPOS.items():
+        if equipo.upper() in [eq.upper() for eq in eq_list]:
+            return gp
+    return ''
+
+# ============================================================
+# ESPN API: PROCESAMIENTO Y MERGE
+# ============================================================
+def consultar_espn_y_actualizar(fecha_hoy):
+    global RESULTADOS, POSICIONES, GOLEADORES, VALLA_MENOS_VENCIDA, TARJETAS_AMARILLAS, TARJETAS_ROJAS
+    
+    print("[INFO] Obteniendo datos en vivo de ESPN API...")
+    
+    current = FECHA_INICIO_TORNEO
+    all_events = []
+    exito_conexion = False
+    
+    while current <= fecha_hoy:
+        date_param = current.strftime("%Y%m%d")
+        url = f"{ESPN_SCOREBOARD_URL}?dates={date_param}"
+        data = _espn_request(url)
+        if data is not None:
+            exito_conexion = True
+            events = data.get('events', [])
+            all_events.extend(events)
+        time.sleep(ESPN_DELAY_ENTRE_REQUESTS)
+        current += datetime.timedelta(days=1)
+        
+    if not exito_conexion or not all_events:
+        print("  [ESPN] No se pudo obtener datos de la API (usando Fallback hardcodeado).")
+        return False
+        
+    resultados_dinamicos = []
+    tarjetas_amarillas_dinamicas = []
+    tarjetas_rojas_dinamicas = []
+    goleadores_dict = {}
+    goles_concedidos = {}
+    pj_equipos = {}
+    
+    for ev in all_events:
+        for comp in ev.get('competitions', []):
+            competitors = comp.get('competitors', [])
+            if len(competitors) != 2:
+                continue
+            
+            home = away = None
+            for c in competitors:
+                if c.get('homeAway') == 'home':
+                    home = c
+                elif c.get('homeAway') == 'away':
+                    away = c
+            if not home or not away:
+                home, away = competitors[0], competitors[1]
+                
+            home_name = mapear_equipo_espn(home.get('team', {}).get('displayName', ''))
+            away_name = mapear_equipo_espn(away.get('team', {}).get('displayName', ''))
+            home_score = int(home.get('score', 0))
+            away_score = int(away.get('score', 0))
+            
+            status = comp.get('status', {})
+            status_type = status.get('type', {})
+            completed = status_type.get('completed', False)
+            state = status_type.get('state', 'pre')
+            
+            date_raw = ev.get('date', comp.get('date', ''))
+            dt = parse_date(date_raw)
+            if not dt:
+                continue
+            
+            # Ajuste huso horario Argentina (-3 hs)
+            dt_arg = dt - datetime.timedelta(hours=3)
+            fecha_str = dt_arg.strftime("%d/%m/%Y")
+            hora_str = dt_arg.strftime("%H:%M")
+            
+            grupo = ''
+            for note in comp.get('notes', []):
+                headline = note.get('headline', '')
+                for prefix in ['Group ', 'Grupo ']:
+                    if prefix in headline:
+                        g = headline.split(prefix)[-1].strip()
+                        if g and g[0] in 'ABCDEFGHIJKL':
+                            grupo = g[0]
+            if not grupo:
+                grupo = obtener_grupo_de_equipo(home_name)
+                
+            venue = comp.get('venue', {})
+            estadio = venue.get('fullName', venue.get('shortName', ''))
+            ciudad = venue.get('address', {}).get('city', '')
+            estadio_str = f"{estadio}, {ciudad}".upper() if estadio and ciudad else (estadio or '').upper()
+            
+            for fix in FIXTURES:
+                if (fix['local'] == home_name and fix['visitante'] == away_name) or \
+                   (fix['local'] in home_name and fix['visitante'] in away_name):
+                    if completed or state == 'post':
+                        fix['jugado'] = True
+                        fix['resultado'] = f"{home_score}-{away_score}"
+            
+            if completed or state == 'post':
+                res_item = {
+                    'fecha': fecha_str,
+                    'hora': hora_str,
+                    'grupo': grupo,
+                    'local': home_name,
+                    'visitante': away_name,
+                    'goles_local': home_score,
+                    'goles_visitante': away_score,
+                    'estadio': estadio_str,
+                    'goles_detalle': [],
+                    'amarillas': [],
+                    'rojas': [],
+                    'nota': ''
+                }
+                
+                details = comp.get('details', [])
+                for det in details:
+                    d_type = det.get('type', {}).get('text', '')
+                    clock = det.get('clock', {}).get('displayValue', '')
+                    athletes = det.get('athletesInvolved', [])
+                    athlete_name = athletes[0].get('displayName', 'DESCONOCIDO').upper() if athletes else 'DESCONOCIDO'
+                    
+                    det_team_id = str(det.get('team', {}).get('id', ''))
+                    if athletes:
+                        det_team_id = str(athletes[0].get('team', {}).get('id', det_team_id))
+                        
+                    det_team_name = 'DESCONOCIDO'
+                    if det_team_id == str(home.get('team', {}).get('id', '')):
+                        det_team_name = home_name
+                    elif det_team_id == str(away.get('team', {}).get('id', '')):
+                        det_team_name = away_name
+                    
+                    if 'Goal' in d_type or 'Gol' in d_type:
+                        own_goal = det.get('ownGoal', False) or 'Own Goal' in d_type or 'Autogol' in d_type
+                        penalty = det.get('penaltyKick', False)
+                        suf = ' (AUTOGOL)' if own_goal else (' (PENAL)' if penalty else '')
+                        gol_str = f"MIN {clock}: {athlete_name} ({det_team_name}){suf}"
+                        res_item['goles_detalle'].append(gol_str)
+                        
+                        if not own_goal:
+                            g_key = (athlete_name, det_team_name)
+                            goleadores_dict[g_key] = goleadores_dict.get(g_key, 0) + 1
+                            
+                    elif d_type == 'Yellow Card':
+                        card_str = f"MIN {clock}: {athlete_name} ({det_team_name})"
+                        res_item['amarillas'].append(card_str)
+                        tarjetas_amarillas_dinamicas.append({
+                            'jugador': athlete_name,
+                            'seleccion': det_team_name,
+                            'partido': f"{home_name} VS {away_name}",
+                            'minuto': clock.replace("'", "")
+                        })
+                        
+                    elif d_type == 'Red Card' or det.get('redCard', False):
+                        card_str = f"MIN {clock}: {athlete_name} ({det_team_name})"
+                        res_item['rojas'].append(card_str)
+                        tarjetas_rojas_dinamicas.append({
+                            'jugador': athlete_name,
+                            'seleccion': det_team_name,
+                            'partido': f"{home_name} VS {away_name}",
+                            'minuto': clock.replace("'", ""),
+                            'tipo': 'ROJA DIRECTA' if not det.get('yellowCard', False) else 'DOBLE AMARILLA',
+                            'motivo': 'SANCION DE JUEGO'
+                        })
+                
+                def get_minute(x):
+                    try:
+                        m = re.findall(r'MIN (\d+)', x)
+                        return int(m[0]) if m else 0
+                    except:
+                        return 0
+                res_item['goles_detalle'].sort(key=get_minute)
+                resultados_dinamicos.append(res_item)
+                
+                goles_concedidos[home_name] = goles_concedidos.get(home_name, 0) + away_score
+                goles_concedidos[away_name] = goles_concedidos.get(away_name, 0) + home_score
+                pj_equipos[home_name] = pj_equipos.get(home_name, 0) + 1
+                pj_equipos[away_name] = pj_equipos.get(away_name, 0) + 1
+                
+    if not resultados_dinamicos:
+        print("  [ESPN] No se procesaron resultados válidos desde el feed de ESPN.")
+        return False
+        
+    RESULTADOS = resultados_dinamicos
+    
+    nuevas_posiciones = {}
+    for gp, eq_list in GRUPOS.items():
+        nuevas_posiciones[gp] = []
+        for eq in eq_list:
+            nuevas_posiciones[gp].append({
+                'equipo': eq, 'pj': 0, 'pg': 0, 'pe': 0, 'pp': 0,
+                'gf': 0, 'gc': 0, 'dg': 0, 'pts': 0
+            })
+            
+    for r in RESULTADOS:
+        h_name = r['local']
+        a_name = r['visitante']
+        h_goles = r['goles_local']
+        a_goles = r['goles_visitante']
+        gp = r['grupo']
+        
+        if not gp or gp not in nuevas_posiciones:
+            continue
+            
+        h_team = next((x for x in nuevas_posiciones[gp] if x['equipo'] == h_name), None)
+        a_team = next((x for x in nuevas_posiciones[gp] if x['equipo'] == a_name), None)
+        
+        if h_team and a_team:
+            h_team['pj'] += 1
+            a_team['pj'] += 1
+            h_team['gf'] += h_goles
+            h_team['gc'] += a_goles
+            a_team['gf'] += a_goles
+            a_team['gc'] += h_goles
+            
+            if h_goles > a_goles:
+                h_team['pg'] += 1
+                h_team['pts'] += 3
+                a_team['pp'] += 1
+            elif h_goles == a_goles:
+                h_team['pe'] += 1
+                h_team['pts'] += 1
+                a_team['pe'] += 1
+                a_team['pts'] += 1
+            else:
+                h_team['pp'] += 1
+                a_team['pg'] += 1
+                a_team['pts'] += 3
+                
+            h_team['dg'] = h_team['gf'] - h_team['gc']
+            a_team['dg'] = a_team['gf'] - a_team['gc']
+            
+    for gp in nuevas_posiciones:
+        nuevas_posiciones[gp] = sorted(nuevas_posiciones[gp], key=lambda x: (-x['pts'], -x['dg'], -x['gf']))
+    POSICIONES = nuevas_posiciones
+    
+    nuevos_goleadores = []
+    for (player, selection), goals in goleadores_dict.items():
+        nuevos_goleadores.append({
+            'jugador': player,
+            'seleccion': selection,
+            'goles': goals
+        })
+    GOLEADORES = sorted(nuevos_goleadores, key=lambda x: -x['goles'])
+    
+    nuevas_vallas = []
+    for gp, eq_list in GRUPOS.items():
+        for eq in eq_list:
+            pj = pj_equipos.get(eq, 0)
+            rec = goles_concedidos.get(eq, 0)
+            if pj > 0:
+                nuevas_vallas.append({
+                    'equipo': eq,
+                    'pj': pj,
+                    'goles_recibidos': rec
+                })
+    VALLA_MENOS_VENCIDA = sorted(nuevas_vallas, key=lambda x: (x['goles_recibidos'], -x['pj']))
+    
+    TARJETAS_AMARILLAS = tarjetas_amarillas_dinamicas
+    TARJETAS_ROJAS = tarjetas_rojas_dinamicas
+    
+    print(f"  [ESPN] Base de datos actualizada con éxito ({len(RESULTADOS)} partidos jugados en total).")
+    return True
 
 # ============================================================
 # FUNCION: OBTENER NOTICIAS RSS
 # ============================================================
 def obtener_noticias_rss():
-    """Lee noticias a través de la consulta RSS consolidada de Google News AR."""
     noticias = []
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -512,7 +837,7 @@ def obtener_noticias_rss():
     }
 
     try:
-        print("  [RSS] Consultando feed unificado en Google News AR...")
+        print("[INFO] Obteniendo noticias via RSS unificado...")
         url_encoded_query = urllib.parse.quote(QUERY_RSS_UNIFICADA)
         url = f"https://news.google.com/rss/search?q={url_encoded_query}&hl=es-419&gl=AR&ceid=AR:es-419"
         
@@ -527,7 +852,6 @@ def obtener_noticias_rss():
             descripcion = (getattr(entry, 'summary', '') or
                            getattr(entry, 'description', '') or '').strip()
             
-            # Limpiar tags HTML de la descripción
             descripcion = re.sub(r'<[^>]+>', '', descripcion)
             descripcion = descripcion[:300].strip()
 
@@ -537,7 +861,6 @@ def obtener_noticias_rss():
             elif hasattr(entry, 'updated') and entry.updated:
                 fecha_pub = str(entry.updated)[:25]
 
-            # Obtener la fuente de origen
             fuente = "Medio Local"
             if hasattr(entry, 'source') and entry.source:
                 fuente = entry.source.get('title', 'Medio Local')
@@ -557,34 +880,25 @@ def obtener_noticias_rss():
 
         print(f"  [RSS] Se procesaron {len(noticias)} noticias con éxito.")
 
-    except requests.exceptions.Timeout:
-        print("  [RSS] TIMEOUT al conectarse a Google News RSS.")
-    except requests.exceptions.ConnectionError:
-        print("  [RSS] ERROR DE CONEXION al conectarse a Google News RSS.")
     except Exception as ex:
-        print(f"  [RSS] ERROR inesperado: {ex}")
+        print(f"  [RSS] ERROR inesperado obteniendo noticias: {ex}")
 
     return noticias
 
 # ============================================================
-# HELPERS
+# HELPERS AUXILIARES
 # ============================================================
 def e(texto):
-    """Escape HTML seguro."""
     return html.escape(str(texto))
 
-
 def parse_fecha(fecha_str):
-    """Convierte DD/MM/YYYY a objeto date."""
     try:
         return datetime.datetime.strptime(fecha_str, "%d/%m/%Y").date()
     except Exception:
         return None
 
-
 def get_partidos_hoy(fecha_hoy):
     return [p for p in FIXTURES if parse_fecha(p['fecha']) == fecha_hoy]
-
 
 def get_proximos_partidos(fecha_hoy, dias=7):
     desde = fecha_hoy + datetime.timedelta(days=1)
@@ -596,53 +910,40 @@ def get_proximos_partidos(fecha_hoy, dias=7):
         and desde <= parse_fecha(p['fecha']) <= hasta
     ]
 
-
-def get_en_vivo(fecha_hoy, hora_actual):
-    """Detecta partidos en curso (heurística: entre inicio y +2h)."""
-    en_vivo = []
-    for p in get_partidos_hoy(fecha_hoy):
-        if not p['jugado']:
-            try:
-                h, m = map(int, p['hora'].split(':'))
-                inicio = datetime.datetime.combine(fecha_hoy, datetime.time(h, m))
-                fin_aprox = inicio + datetime.timedelta(hours=2)
-                ahora = datetime.datetime.combine(fecha_hoy, hora_actual)
-                if inicio <= ahora <= fin_aprox:
-                     en_vivo.append(p)
-            except Exception:
-                pass
-    return en_vivo
-
+def get_fecha_maxima_resultados():
+    if not RESULTADOS:
+        return FECHA_INICIO_TORNEO
+    fechas = []
+    for r in RESULTADOS:
+        d = parse_fecha(r['fecha'])
+        if d:
+            fechas.append(d)
+    return max(fechas) if fechas else FECHA_INICIO_TORNEO
 
 def obtener_suspendidos():
-    """Calcula automáticamente los suspendidos en base a tarjetas y overrides manuales."""
     suspendidos = []
-    
-    # 1. Agregar expulsados (tarjetas rojas en partidos disputados)
     for r in TARJETAS_ROJAS:
         suspendidos.append({
             'jugador': r['jugador'],
             'seleccion': r['seleccion'],
-            'motivo': f"EXPULSION (Tarjeta Roja en {r['partido']}, Minuto {r['minuto']}). Motivo: {r['motivo']}"
+            'motivo': f"EXPULSION (Tarjeta Roja en {r['partido']}, Minuto {r['minuto']}). Motivo: {r.get('motivo', 'Sancion disciplinaria')}"
         })
-    
-    # 2. Calcular acumuladas (2 amarillas en partidos distintos antes de semifinales)
+        
     amarillas_por_jugador = {}
     for a in TARJETAS_AMARILLAS:
         clave = (a['jugador'], a['seleccion'])
         if clave not in amarillas_por_jugador:
             amarillas_por_jugador[clave] = set()
         amarillas_por_jugador[clave].add(a['partido'])
-    
+        
     for (jugador, seleccion), partidos in amarillas_por_jugador.items():
         if len(partidos) >= 2:
             suspendidos.append({
                 'jugador': jugador,
                 'seleccion': seleccion,
-                'motivo': f"ACUMULACION DE TARJETAS AMARILLAS (2 amarillas en partidos distintos: {', '.join(partidos)})"
+                'motivo': f"ACUMULACION DE AMARILLAS (2 amarillas en partidos distintos: {', '.join(partidos)})"
             })
             
-    # 3. Agregar manuales
     for sm in SUSPENDIDOS_MANUALES:
         if not any(s['jugador'] == sm['jugador'] and s['seleccion'] == sm['seleccion'] for s in suspendidos):
             suspendidos.append({
@@ -654,29 +955,64 @@ def obtener_suspendidos():
     return suspendidos
 
 # ============================================================
-# SECCIONES HTML
+# SECCIONES HTML DE SALIDA
 # ============================================================
 def sec(nombre):
     return f"\n\n", f"\n\n"
-
 
 def bloque(nombre, contenido):
     ini, fin = sec(nombre)
     return ini + contenido + fin
 
+def generar_coherencia_datos(fecha_hoy, espn_exito, max_fecha_res):
+    c = []
+    c.append("<h2>COHERENCIA DE DATOS Y ESTADO DE ACTUALIZACION</h2>")
+    c.append("<ul>")
+    if espn_exito:
+        c.append("<li><strong>FUENTE DE DATOS EN VIVO:</strong> ESPN API (CONEXION EXITOSA)</li>")
+        c.append(f"<li><strong>RESULTADOS ACTUALIZADOS HASTA EL:</strong> {max_fecha_res.strftime('%d/%m/%Y')}</li>")
+        c.append("<li><strong>NOTICIAS RSS:</strong> TIEMPO REAL (ACTUALIZADAS AL MOMENTO DE GENERACION)</li>")
+        c.append("<li><strong>ESTADO:</strong> TODOS LOS RESULTADOS Y POSICIONES ESTAN DINAMICAMENTE SINCROINZADOS CON LA FECHA ACTUAL.</li>")
+    else:
+        c.append("<li><strong>FUENTE DE DATOS:</strong> DATOS HARDCODEADOS (FALLBACK POR ERROR DE CONEXION A ESPN API)</li>")
+        c.append(f"<li><strong>RESULTADOS CARGADOS HASTA EL:</strong> {max_fecha_res.strftime('%d/%m/%Y')}</li>")
+        c.append("<li><strong>NOTICIAS RSS:</strong> TIEMPO REAL (ACTUALIZADAS AL MOMENTO DE GENERACION)</li>")
+        gap = (fecha_hoy - max_fecha_res).days
+        if gap > 0:
+            c.append(f"<li><strong>ADVERTENCIA DE DESACTUALIZACION:</strong> EXISTE UN GAP DE {gap} DIA(S) ENTRE LOS RESULTADOS DISCOPNIBLES EN ESTE DOCUMENTO ({max_fecha_res.strftime('%d/%m/%Y')}) Y LA FECHA DE GENERACION ({fecha_hoy.strftime('%d/%m/%Y')}).</li>")
+            c.append("<li><strong>RECOMENDACION RAG:</strong> SI EL USUARIO PREGUNTA POR RESULTADOS O SUCESOS OCURRIDOS ENTRE ESTAS FECHAS, SE DEBE DAR PRIORIDAD DE LA INFORMACION A LAS NOTICIAS RSS EN TIEMPO REAL, YA QUE LAS TABLAS Y ESTADISTICAS INTERNAS PUEDEN ESTAR CONGELADAS.</li>")
+        else:
+            c.append("<li><strong>ESTADO:</strong> LOS DATOS FALLBACK ESTAN AL DIA CON LA FECHA DE GENERACION.</li>")
+    c.append("</ul>")
+    return bloque("COHERENCIA DE DATOS", "\n".join(c))
 
-def generar_estado_torneo():
+def generar_estado_torneo(fecha_hoy, resultados_count):
     c = []
     c.append("<h2>ESTADO DEL TORNEO</h2>")
     c.append("<ul>")
     c.append("<li><strong>TORNEO:</strong> FIFA WORLD CUP 2026</li>")
-    c.append("<li><strong>FASE ACTUAL:</strong> FASE DE GRUPOS - JORNADA 1</li>")
+    
+    if resultados_count >= 104:
+        fase = "TORNEO FINALIZADO"
+    elif resultados_count >= 100:
+        fase = "FINAL Y TERCER PUESTO"
+    elif resultados_count >= 96:
+        fase = "SEMIFINALES"
+    elif list(LLAVE_ELIMINATORIA.values())[0]:
+        fase = "FASE DE ELIMINACION DIRECTA"
+    else:
+        if fecha_hoy < FECHA_INICIO_TORNEO:
+            fase = "NO INICIADO"
+        else:
+            fase = "FASE DE GRUPOS"
+            
+    c.append(f"<li><strong>FASE ACTUAL:</strong> {fase}</li>")
     c.append("<li><strong>EDICION:</strong> 23 COPA DEL MUNDO FIFA</li>")
     c.append("<li><strong>FORMATO:</strong> 48 SELECCIONES - 12 GRUPOS (A a L) - 104 PARTIDOS EN TOTAL</li>")
     c.append("<li><strong>SEDES:</strong> ESTADOS UNIDOS, MEXICO Y CANADA (3 PAISES SEDE)</li>")
     c.append("<li><strong>INICIO:</strong> 11 DE JUNIO DE 2026</li>")
     c.append("<li><strong>FINAL:</strong> 19 DE JULIO DE 2026 - METLIFE STADIUM, NEW YORK/NEW JERSEY</li>")
-    c.append("<li><strong>PARTIDOS COMPLETADOS AL 13/06:</strong> 4</li>")
+    c.append(f"<li><strong>PARTIDOS COMPLETADOS AL {fecha_hoy.strftime('%d/%m/%Y')}:</strong> {resultados_count}</li>")
     c.append("</ul>")
     c.append("<h3>CIUDADES SEDE</h3><ul>")
     c.append("<li><strong>ESTADOS UNIDOS (11 ciudades):</strong> New York/New Jersey, Los Angeles, Dallas, San Francisco, Seattle, Boston, Miami, Atlanta, Houston, Kansas City, Philadelphia</li>")
@@ -687,12 +1023,11 @@ def generar_estado_torneo():
     c.append("<li>PRIMERA EDICION CON 48 SELECCIONES PARTICIPANTES</li>")
     c.append("<li>PRIMERA EDICION CON 3 PAISES ORGANIZADORES</li>")
     c.append("<li>PRIMERA EDICION CON 12 GRUPOS EN FASE INICIAL</li>")
-    c.append("<li>CLASIFICAN LOS 2 PRIMEROS DE CADA GRUPO MAS LOS 8 MEJORES TERCEROS (32 TOTAL A OCTAVOS)</li>")
+    c.append("<li>CLASIFICAN LOS 2 PRIMEROS DE CADA GRUPO MAS LOS 8 MEJORES TERCEROS (32 TOTAL A DIECISEISAVOS DE FINAL)</li>")
     c.append("</ul>")
     return bloque("ESTADO DEL TORNEO", "\n".join(c))
 
-
-def generar_partidos_hoy(fecha_hoy):
+def generar_partidos_hoy(fecha_hoy, hora_actual, espn_exito):
     c = []
     c.append("<h2>PARTIDOS DE HOY</h2>")
     partidos = get_partidos_hoy(fecha_hoy)
@@ -702,30 +1037,58 @@ def generar_partidos_hoy(fecha_hoy):
         c.append(f"<p><strong>FECHA: {fecha_hoy.strftime('%d/%m/%Y')}</strong></p>")
         c.append("<ul>")
         for p in partidos:
-            estado = "COMPLETADO" if p['jugado'] else "PENDIENTE"
-            res = f" | RESULTADO: {p['resultado']}" if p['jugado'] and p['resultado'] else ""
+            if p['jugado']:
+                estado = f"FINALIZADO ({p['resultado']})"
+            else:
+                try:
+                    h, m = map(int, p['hora'].split(':'))
+                    inicio = datetime.datetime.combine(fecha_hoy, datetime.time(h, m))
+                    fin_aprox = inicio + datetime.timedelta(hours=2)
+                    ahora = datetime.datetime.combine(fecha_hoy, hora_actual)
+                    if ahora > fin_aprox:
+                        estado = "PROBABLEMENTE FINALIZADO (RESULTADO PENDIENTE DE CARGA)"
+                    elif inicio <= ahora <= fin_aprox:
+                        estado = "POSIBLEMENTE EN CURSO (ESTIMACION POR HORARIO)"
+                    else:
+                        estado = "PENDIENTE"
+                except:
+                    estado = "PENDIENTE"
+                    
             arg = " *** ARG ***" if ('ARGENTINA' in p['local'] or 'ARGENTINA' in p['visitante']) else ""
             c.append(f"<li>{e(p['hora'])} ARG | GRP {e(p['grupo'])} | "
-                     f"{e(p['local'])} VS {e(p['visitante'])}{e(res)}{e(arg)} | {estado}</li>")
+                     f"{e(p['local'])} VS {e(p['visitante'])}{e(arg)} | Estado: {estado}</li>")
         c.append("</ul>")
     return bloque("PARTIDOS DE HOY", "\n".join(c))
-
 
 def generar_en_vivo(fecha_hoy, hora_actual):
     c = []
     c.append("<h2>PARTIDOS EN VIVO</h2>")
-    en_vivo = get_en_vivo(fecha_hoy, hora_actual)
+    
+    en_vivo = []
+    for p in get_partidos_hoy(fecha_hoy):
+        if not p['jugado']:
+            try:
+                h, m = map(int, p['hora'].split(':'))
+                inicio = datetime.datetime.combine(fecha_hoy, datetime.time(h, m))
+                fin_aprox = inicio + datetime.timedelta(hours=2)
+                ahora = datetime.datetime.combine(fecha_hoy, hora_actual)
+                if inicio <= ahora <= fin_aprox:
+                     en_vivo.append(p)
+            except:
+                pass
+                
     if not en_vivo:
-        c.append("<p>NO HAY PARTIDOS EN CURSO EN ESTE MOMENTO (SEGUN HORARIO DE ACTUALIZACION).</p>")
-        c.append("<p>CONSULTAR SECCION PARTIDOS DE HOY PARA VER PROGRAMACION COMPLETA DEL DIA.</p>")
+        c.append("<p>NO HAY PARTIDOS EN VENTANA HORARIA DE JUEGO EN ESTE MOMENTO (BASADO EN HORARIOS PROGRAMADOS).</p>")
     else:
         c.append("<ul>")
         for p in en_vivo:
-            c.append(f"<li>[EN VIVO] {e(p['hora'])} ARG | GRP {e(p['grupo'])} | "
+            c.append(f"<li>[POSIBLEMENTE EN CURSO] {e(p['hora'])} ARG | GRP {e(p['grupo'])} | "
                      f"{e(p['local'])} VS {e(p['visitante'])}</li>")
         c.append("</ul>")
+        c.append("<p><em>NOTA: ESTADO ESTIMADO POR HORARIO PROGRAMADO. NO ES DATO EN TIEMPO REAL.</em></p>")
+        
+    c.append("<p><strong>IMPORTANTE: ESTA SECCION SE BASA EN HORARIOS PROGRAMADOS, NO EN DATOS EN TIEMPO REAL. PARA RESULTADOS CONFIRMADOS, CONSULTAR LAS NOTICIAS RSS O LA SECCION DE ULTIMOS RESULTADOS.</strong></p>")
     return bloque("PARTIDOS EN VIVO", "\n".join(c))
-
 
 def generar_proximos_partidos(fecha_hoy):
     c = []
@@ -745,13 +1108,27 @@ def generar_proximos_partidos(fecha_hoy):
             c.append(f"<li>{e(p['hora'])} ARG | GRP {e(p['grupo'])} | "
                      f"{e(p['local'])} VS {e(p['visitante'])}{e(arg)}</li>")
         c.append("</ul>")
+        
+    pasados_pendientes = [
+        p for p in FIXTURES
+        if not p['jugado']
+        and parse_fecha(p['fecha']) is not None
+        and parse_fecha(p['fecha']) < fecha_hoy
+    ]
+    if pasados_pendientes:
+        c.append("<h3>PARTIDOS PASADOS PENDIENTES DE RESULTADO EN ESTE DOCUMENTO</h3>")
+        c.append("<ul>")
+        for p in pasados_pendientes:
+            c.append(f"<li>PARTIDO PROGRAMADO PARA EL {e(p['fecha'])} {e(p['hora'])} ARG: "
+                     f"{e(p['local'])} VS {e(p['visitante'])} - RESULTADO NO DISPONIBLE EN ESTE DOCUMENTO. CONSULTAR SECCION NOTICIAS RSS.</li>")
+        c.append("</ul>")
+        
     return bloque("PROXIMOS PARTIDOS", "\n".join(c))
-
 
 def generar_ultimos_resultados():
     c = []
     c.append("<h2>ULTIMOS RESULTADOS</h2>")
-    c.append("<p>PARTIDOS COMPLETADOS AL 13/06/2026:</p>")
+    c.append("<p>LISTADO DE PARTIDOS CON RESULTADOS REGISTRADOS:</p>")
     for i, r in enumerate(RESULTADOS, 1):
         c.append(f"<h3>PARTIDO {i} - GRUPO {e(r['grupo'])} | {e(r['fecha'])} {e(r['hora'])} ARG</h3>")
         c.append(f"<p><strong>{e(r['local'])} {r['goles_local']} - {r['goles_visitante']} {e(r['visitante'])}</strong></p>")
@@ -775,11 +1152,14 @@ def generar_ultimos_resultados():
             c.append(f"<p><em>NOTA: {e(r['nota'])}</em></p>")
     return bloque("ULTIMOS RESULTADOS", "\n".join(c))
 
-
-def generar_grupos():
+def generar_grupos(fecha_hoy, max_fecha_res):
     c = []
     c.append("<h2>GRUPOS Y TABLAS DE POSICIONES</h2>")
-    c.append("<p>ACTUALIZADO AL 13/06/2026. SOLO GRUPOS CON PARTIDOS JUGADOS MUESTRAN POSICIONES.</p>")
+    
+    if fecha_hoy > max_fecha_res:
+        dias_gap = (fecha_hoy - max_fecha_res).days
+        c.append(f"<p><strong>[ADVERTENCIA: POSICIONES CALCULADAS CON RESULTADOS REGISTRADOS HASTA EL {max_fecha_res.strftime('%d/%m/%Y')}. PUEDEN FALTAR {dias_gap} DIA(S) DE ACTUALIZACION.]</strong></p>")
+        
     for letra, equipos in GRUPOS.items():
         c.append(f"<h3>GRUPO {letra}</h3>")
         c.append("<p><strong>INTEGRANTES:</strong></p><ul>")
@@ -787,6 +1167,7 @@ def generar_grupos():
             suf = " (SEDE)" if eq in ['MEXICO', 'ESTADOS UNIDOS', 'CANADA'] else ""
             c.append(f"<li>{e(eq)}{suf}</li>")
         c.append("</ul>")
+        
         pos_data = POSICIONES.get(letra, [])
         jugados = any(t['pj'] > 0 for t in pos_data)
         if jugados:
@@ -798,8 +1179,8 @@ def generar_grupos():
             c.append("</ul>")
         else:
             c.append("<p>SIN PARTIDOS JUGADOS AUN EN ESTE GRUPO.</p>")
+            
     return bloque("GRUPOS", "\n".join(c))
-
 
 def generar_llave_eliminatoria():
     c = []
@@ -824,35 +1205,43 @@ def generar_llave_eliminatoria():
         
     return bloque("LLAVE ELIMINATORIA", "\n".join(c))
 
-
-def generar_goleadores():
+def generar_goleadores(fecha_hoy, max_fecha_res):
     c = []
     c.append("<h2>TABLA DE GOLEADORES</h2>")
-    c.append("<p>ACTUALIZADO AL 13/06/2026 (TRAS 4 PARTIDOS JUGADOS)</p>")
+    
+    if fecha_hoy > max_fecha_res:
+        dias_gap = (fecha_hoy - max_fecha_res).days
+        c.append(f"<p><strong>[ADVERTENCIA: RANKING BASADO EN DATOS HASTA EL {max_fecha_res.strftime('%d/%m/%Y')}. PUEDEN FALTAR {dias_gap} DIA(S) DE ACTUALIZACION.]</strong></p>")
+        
     c.append("<ul>")
     for i, g in enumerate(GOLEADORES, 1):
         c.append(f"<li>{i}. {e(g['jugador'])} ({e(g['seleccion'])}) - {g['goles']} GOL{'ES' if g['goles'] != 1 else ''}</li>")
     c.append("</ul>")
-    c.append("<p><em>NOTA: LOS AUTOGOLES NO CUENTAN PARA EL RANKING.</em></p>")
-    c.append("<p><em>AUTOGOL DEL TORNEO: DAMIAN BOBADILLA (PARAGUAY) EN USA VS PARAGUAY.</em></p>")
+    c.append("<p><em>NOTA: LOS AUTOGOLES NO CUENTAN PARA EL RANKING DE GOLEADORES.</em></p>")
     return bloque("GOLEADORES", "\n".join(c))
 
-
-def generar_valla():
+def generar_valla(fecha_hoy, max_fecha_res):
     c = []
     c.append("<h2>VALLA MENOS VENCIDA</h2>")
-    c.append("<p>ACTUALIZADO AL 13/06/2026</p>")
+    
+    if fecha_hoy > max_fecha_res:
+        dias_gap = (fecha_hoy - max_fecha_res).days
+        c.append(f"<p><strong>[ADVERTENCIA: ESTADISTICA BASADA EN DATOS HASTA EL {max_fecha_res.strftime('%d/%m/%Y')}. PUEDEN FALTAR {dias_gap} DIA(S) DE ACTUALIZACION.]</strong></p>")
+        
     c.append("<ul>")
     for v in sorted(VALLA_MENOS_VENCIDA, key=lambda x: x['goles_recibidos']):
         c.append(f"<li>{e(v['equipo'])} - {v['goles_recibidos']} GOLES RECIBIDOS (PJ: {v['pj']})</li>")
     c.append("</ul>")
     return bloque("VALLA MENOS VENCIDA", "\n".join(c))
 
-
-def generar_tarjetas_amarillas():
+def generar_tarjetas_amarillas(fecha_hoy, max_fecha_res):
     c = []
     c.append("<h2>TARJETAS AMARILLAS</h2>")
-    c.append("<p>ACTUALIZADO AL 13/06/2026</p>")
+    
+    if fecha_hoy > max_fecha_res:
+        dias_gap = (fecha_hoy - max_fecha_res).days
+        c.append(f"<p><strong>[ADVERTENCIA: AMARILLAS REGISTRADAS HASTA EL {max_fecha_res.strftime('%d/%m/%Y')}. PUEDEN FALTAR {dias_gap} DIA(S) DE ACTUALIZACION.]</strong></p>")
+        
     c.append("<ul>")
     for t in TARJETAS_AMARILLAS:
         nota = f" ({e(t.get('nota', ''))})" if t.get('nota') else ""
@@ -860,11 +1249,14 @@ def generar_tarjetas_amarillas():
     c.append("</ul>")
     return bloque("TARJETAS AMARILLAS", "\n".join(c))
 
-
-def generar_tarjetas_rojas():
+def generar_tarjetas_rojas(fecha_hoy, max_fecha_res):
     c = []
     c.append("<h2>TARJETAS ROJAS</h2>")
-    c.append("<p>ACTUALIZADO AL 13/06/2026</p>")
+    
+    if fecha_hoy > max_fecha_res:
+        dias_gap = (fecha_hoy - max_fecha_res).days
+        c.append(f"<p><strong>[ADVERTENCIA: ROJAS REGISTRADAS HASTA EL {max_fecha_res.strftime('%d/%m/%Y')}. PUEDEN FALTAR {dias_gap} DIA(S) DE ACTUALIZACION.]</strong></p>")
+        
     c.append("<ul>")
     for t in TARJETAS_ROJAS:
         c.append(f"<li>{e(t['jugador'])} ({e(t['seleccion'])}) - MIN {e(t['minuto'])} - "
@@ -872,12 +1264,14 @@ def generar_tarjetas_rojas():
     c.append("</ul>")
     return bloque("TARJETAS ROJAS", "\n".join(c))
 
-
-def generar_jugadores_suspendidos():
+def generar_jugadores_suspendidos(fecha_hoy, max_fecha_res):
     c = []
     c.append("<h2>JUGADORES SUSPENDIDOS</h2>")
-    c.append("<p>JUGADORES QUE NO PUEDEN DISPUTAR EL PROXIMO PARTIDO (SANCIONES FIFA):</p>")
     
+    if fecha_hoy > max_fecha_res:
+        dias_gap = (fecha_hoy - max_fecha_res).days
+        c.append(f"<p><strong>[ADVERTENCIA: SUSPENSIONES CALCULADAS CON DATOS HASTA EL {max_fecha_res.strftime('%d/%m/%Y')}. PUEDEN FALTAR {dias_gap} DIA(S) DE ACTUALIZACION.]</strong></p>")
+        
     suspendidos = obtener_suspendidos()
     if not suspendidos:
         c.append("<p>NO HAY JUGADORES SUSPENDIDOS PARA EL SIGUIENTE ENCUENTRO EN ESTE MOMENTO.</p>")
@@ -888,7 +1282,6 @@ def generar_jugadores_suspendidos():
         c.append("</ul>")
         
     return bloque("JUGADORES SUSPENDIDOS", "\n".join(c))
-
 
 def generar_seleccion_argentina():
     c = []
@@ -934,7 +1327,6 @@ def generar_seleccion_argentina():
     c.append("</ul>")
     return bloque("SELECCION ARGENTINA", "\n".join(c))
 
-
 def generar_noticias(noticias):
     c = []
     c.append("<h2>NOTICIAS ARGENTINA (FUENTES RSS LOCALES)</h2>")
@@ -953,7 +1345,6 @@ def generar_noticias(noticias):
                 c.append(f"<p>{e(n['descripcion'])}</p>")
     c.append("<p><em>FUENTES RSS CONSOLIDADAS: GOOGLE NEWS AR (FILTRADO POR MEDIOS LOCALES)</em></p>")
     return bloque("NOTICIAS ARGENTINA", "\n".join(c))
-
 
 def generar_telecentro():
     c = []
@@ -979,32 +1370,231 @@ def generar_telecentro():
     c.append("<p><em>NOTA: PARA CONTRATAR DISNEY+ PREMIUM INGRESAR EN TELECENTRO.COM.AR O DESDE LA APP TELECENTRO PLAY.</em></p>")
     return bloque("TRANSMISIONES TELECENTRO PLAY", "\n".join(c))
 
+# ============================================================
+# FAQ DINAMICO SENSIBLE A LA FECHA DE EJECUCION
+# ============================================================
+def generar_faq_dinamico(fecha_hoy):
+    faq_dinamico = []
+    
+    p1_resultado = None
+    for r in RESULTADOS:
+        if (r['local'] == 'ARGENTINA' and r['visitante'] == 'ARGELIA') or \
+           (r['local'] == 'ARGELIA' and r['visitante'] == 'ARGENTINA'):
+            p1_resultado = r
+            break
+            
+    if p1_resultado:
+        faq_dinamico.append((
+            'CUANDO DEBUTA ARGENTINA EN EL MUNDIAL 2026?',
+            f"ARGENTINA YA DEBUTO EL MARTES 16 DE JUNIO DE 2026 FRENTE A ARGELIA EN KANSAS CITY, USA. RESULTADO: ARGENTINA {p1_resultado['goles_local']} - {p1_resultado['goles_visitante']} ARGELIA."
+        ))
+    else:
+        debut_date = datetime.date(2026, 6, 16)
+        if fecha_hoy > debut_date:
+            faq_dinamico.append((
+                'CUANDO DEBUTA ARGENTINA EN EL MUNDIAL 2026?',
+                "ARGENTINA DEBUTABA EL MARTES 16 DE JUNIO DE 2026 FRENTE A ARGELIA EN KANSAS CITY. EL RESULTADO DE ESTE PARTIDO AUN NO ESTA CARGADO EN ESTE DOCUMENTO. CONSULTAR SECCION NOTICIAS RSS."
+            ))
+        elif fecha_hoy == debut_date:
+            faq_dinamico.append((
+                'CUANDO DEBUTA ARGENTINA EN EL MUNDIAL 2026?',
+                "ARGENTINA DEBUTA HOY MARTES 16 DE JUNIO DE 2026 A LAS 22:00 (HORA ARGENTINA) FRENTE A ARGELIA EN KANSAS CITY, USA."
+            ))
+        else:
+            faq_dinamico.append((
+                'CUANDO DEBUTA ARGENTINA EN EL MUNDIAL 2026?',
+                "ARGENTINA DEBUTA EL MARTES 16 DE JUNIO DE 2026 A LAS 22:00 (HORA ARGENTINA) FRENTE A ARGELIA EN KANSAS CITY, USA."
+            ))
+            
+    faq_dinamico.append((
+        'EN QUE GRUPO ESTA ARGENTINA?',
+        'ARGENTINA INTEGRA EL GRUPO J JUNTO A ARGELIA, AUSTRIA Y JORDANIA.'
+    ))
+    
+    partidos_arg = []
+    for p in ARGENTINA['partidos']:
+        res = None
+        for r in RESULTADOS:
+            if (r['local'] == 'ARGENTINA' and r['visitante'] == p['rival']) or \
+               (r['local'] == p['rival'] and r['visitante'] == 'ARGENTINA'):
+                res = r
+                break
+        p_date = parse_fecha(p['fecha'])
+        if res:
+            partidos_arg.append(f"VS {p['rival']} ({p['fecha']}): ARGENTINA {res['goles_local']} - {res['goles_visitante']} {p['rival']}")
+        elif p_date and p_date < fecha_hoy:
+            partidos_arg.append(f"VS {p['rival']} ({p['fecha']}): RESULTADO PENDIENTE DE CARGA")
+        elif p_date and p_date == fecha_hoy:
+            partidos_arg.append(f"VS {p['rival']} (HOY A LAS {p['hora']})")
+        else:
+            partidos_arg.append(f"VS {p['rival']} ({p['fecha']} A LAS {p['hora']})")
+            
+    faq_dinamico.append((
+        'CUANTOS PARTIDOS JUEGA ARGENTINA EN LA FASE DE GRUPOS?',
+        f"ARGENTINA JUEGA 3 PARTIDOS EN LA FASE DE GRUPOS: {', '.join(partidos_arg)}."
+    ))
+    
+    faq_dinamico.append((
+        'QUIEN ES EL DIRECTOR TECNICO DE ARGENTINA?',
+        f"{ARGENTINA['dt']} ES EL DT DE LA SELECCION ARGENTINA."
+    ))
+    
+    faq_dinamico.append((
+        'QUIEN ES EL CAPITAN DE ARGENTINA?',
+        f"{ARGENTINA['capitan']} ES EL CAPITAN. ES SU SEXTO Y POSIBLEMENTE ULTIMO MUNDIAL."
+    ))
+    
+    faq_dinamico.append((
+        'POR QUE CANAL SE VE ARGENTINA EN EL MUNDIAL?',
+        'LOS PARTIDOS DE ARGENTINA SE VEN POR TELEFE (CH 12 / 1001 HD), TV PUBLICA (CH 8 / 999 HD) Y TYC SPORTS (CH 106 / 1018 HD). TAMBIEN POR DISNEY+ PREMIUM ($23.999/MES). EN TELECENTRO PLAY LOS 3 PARTIDOS TIENEN COBERTURA MULTIPLE.'
+    ))
+    
+    for rival, fecha_partido_str, hora_partido_str, ciudad_partido in [
+        ('ARGELIA', '16/06/2026', '22:00', 'KANSAS CITY, USA'),
+        ('AUSTRIA', '22/06/2026', '14:00', 'DALLAS, USA'),
+        ('JORDANIA', '27/06/2026', '23:00', 'DALLAS, USA'),
+    ]:
+        res = None
+        for r in RESULTADOS:
+            if (r['local'] == 'ARGENTINA' and r['visitante'] == rival) or \
+               (r['local'] == rival and r['visitante'] == 'ARGENTINA'):
+                res = r
+                break
+                
+        p_date = parse_fecha(fecha_partido_str)
+        if res:
+            resp = f"EL PARTIDO YA SE JUGO EL {fecha_partido_str}. RESULTADO: ARGENTINA {res['goles_local']} - {res['goles_visitante']} {rival}."
+        elif p_date and p_date < fecha_hoy:
+            resp = f"EL PARTIDO ESTABA PROGRAMADO PARA EL {fecha_partido_str} A LAS {hora_partido_str} ARG EN {ciudad_partido}. EL RESULTADO AUN NO ESTA CARGADO EN ESTE DOCUMENTO."
+        elif p_date and p_date == fecha_hoy:
+            resp = f"EL PARTIDO ES HOY {fecha_partido_str} A LAS {hora_partido_str} (HORA ARGENTINA) EN {ciudad_partido}."
+        else:
+            resp = f"EL PARTIDO ESTA PROGRAMADO PARA EL {fecha_partido_str} A LAS {hora_partido_str} (HORA ARGENTINA) EN {ciudad_partido}."
+            
+        faq_dinamico.append((
+            f"A QUE HORA ES EL PARTIDO DE ARGENTINA VS {rival}?",
+            resp
+        ))
+        
+    faq_dinamico.append((
+        'CUANTOS EQUIPOS PARTICIPAN EN EL MUNDIAL 2026?',
+        '48 SELECCIONES PARTICIPAN EN EL MUNDIAL 2026, DISTRIBUIDAS EN 12 GRUPOS DE 4 EQUIPOS.'
+    ))
+    
+    faq_dinamico.append((
+        'COMO ES EL FORMATO DEL MUNDIAL 2026?',
+        'FASE DE GRUPOS: 12 GRUPOS DE 4 EQUIPOS. CLASIFICAN LOS 2 PRIMEROS DE CADA GRUPO MAS LOS 8 MEJORES TERCEROS (32 EQUIPOS EN TOTAL A DIECISEISAVOS DE FINAL / ROUND OF 32). LUEGO ELIMINACION DIRECTA HASTA LA FINAL.'
+    ))
+    
+    faq_dinamico.append((
+        'DONDE SE JUEGA EL MUNDIAL 2026?',
+        'EN ESTADOS UNIDOS, MEXICO Y CANADA. ES EL PRIMER MUNDIAL EN 3 PAISES. LA FINAL SE JUEGA EN NEW YORK/NEW JERSEY EL 19 DE JULIO DE 2026.'
+    ))
+    
+    faq_dinamico.append((
+        'CUANDO TERMINA EL MUNDIAL 2026?',
+        'LA FINAL ES EL 19 DE JULIO DE 2026 EN EL METLIFE STADIUM, NEW YORK/NEW JERSEY.'
+    ))
+    
+    if GOLEADORES:
+        top_goleadores = []
+        for g in GOLEADORES[:5]:
+            top_goleadores.append(f"{g['jugador']} ({g['seleccion']}) CON {g['goles']} GOL{'ES' if g['goles'] > 1 else ''}")
+        resp_goleador = f"SEGUN ULTIMOS DATOS CARGADOS: {', '.join(top_goleadores)}."
+    else:
+        resp_goleador = "NO SE REGISTRAN GOLES EN EL TORNEO AUN."
+        
+    faq_dinamico.append((
+        'QUIEN ES EL MAXIMO GOLEADOR DEL MUNDIAL?',
+        resp_goleador
+    ))
+    
+    partidos_jugados = []
+    for r in RESULTADOS:
+        partidos_jugados.append(f"{r['local']} {r['goles_local']}-{r['goles_visitante']} {r['visitante']} ({r['fecha']})")
+        
+    if partidos_jugados:
+        resp_partidos = f"PARTIDOS CON RESULTADOS REGISTRADOS EN ESTE DOCUMENTO: {', '.join(partidos_jugados[:8])}."
+        if len(partidos_jugados) > 8:
+            resp_partidos += " (VER SECCION ULTIMOS RESULTADOS PARA LA LISTA COMPLETA)."
+    else:
+        resp_partidos = "NO SE REGISTRAN PARTIDOS COMPLETADOS EN LA BASE DE DATOS AUN."
+        
+    faq_dinamico.append((
+        'QUE PARTIDOS SE JUGARON HASTA AHORA?',
+        resp_partidos
+    ))
+    
+    faq_dinamico.append((
+        'DONDE JUEGA ARGENTINA LOS PARTIDOS DE LA FASE DE GRUPOS?',
+        'PARTIDO 1 (VS ARGELIA): KANSAS CITY, USA. PARTIDO 2 (VS AUSTRIA) Y PARTIDO 3 (VS JORDANIA): DALLAS, USA.'
+    ))
+    
+    faq_dinamico.extend([
+        ('QUE CANAL ES TELEFE EN TELECENTRO?',
+         'TELEFE ESTA EN EL CANAL 12 (SD) Y CANAL 1001 (HD) EN TELECENTRO PLAY.'),
+        ('QUE CANAL ES TYC SPORTS EN TELECENTRO?',
+         'TYC SPORTS ESTA EN EL CANAL 106 (SD) Y CANAL 1018 (HD) EN TELECENTRO PLAY.'),
+        ('QUE CANAL ES TV PUBLICA EN TELECENTRO?',
+         'TV PUBLICA ESTA EN EL CANAL 8 (SD) Y CANAL 999 (HD) EN TELECENTRO PLAY.'),
+        ('CUANTO CUESTA DISNEY PLUS PREMIUM EN TELECENTRO?',
+         'DISNEY+ PREMIUM CUESTA $23.999 ARS POR MES EN TELECENTRO PLAY.'),
+        ('CUANTOS JUGADORES LLEVA ARGENTINA AL MUNDIAL?',
+         'ARGENTINA LLEVA 26 JUGADORES: 3 ARQUEROS, 8 DEFENSORES, 9 MEDIOCAMPISTAS Y 6 DELANTEROS. BALERDI DIO DE BAJA POR LESION.'),
+        ('TIENE TYC SPORTS TODOS LOS PARTIDOS DEL MUNDIAL?',
+         'TYC SPORTS TRANSMITE LA MAYORIA DE LOS PARTIDOS. PARA LOS PARTIDOS DE ARGENTINA, SE SUMA TELEFE Y TV PUBLICA (SEÑAL ABIERTA). VER LA GRILLA COMPLETA EN LA SECCION TRANSMISIONES TELECENTRO PLAY.'),
+        ('DONDE ESTA CONCENTRADA ARGENTINA?',
+         'ARGENTINA ESTA CONCENTRADA EN EL COMPASS MINERALS NATIONAL PERFORMANCE CENTER, KANSAS CITY, USA.'),
+        ('QUIEN ES EL SUBCAPITAN DE ARGENTINA?',
+         'NICOLAS OTAMENDI ES EL SUBCAPITAN DE LA SELECCION ARGENTINA.'),
+        ('CUAL ES EL RESULTADO DEL PRIMER PARTIDO DEL MUNDIAL?',
+         'EL PRIMER PARTIDO FUE MEXICO 2-0 SUDAFRICA, EL 11/06/2026 EN EL ESTADIO AZTECA. SUDAFRICA TERMINO CON 9 JUGADORES.')
+    ])
+    
+    return faq_dinamico
 
-def generar_faq():
+def generar_faq(faq_list):
     c = []
     c.append("<h2>PREGUNTAS FRECUENTES (FAQ)</h2>")
     c.append("<p>BASE DE RESPUESTAS PARA ASISTENTE VIRTUAL - TELECENTRO</p>")
-    for i, (pregunta, respuesta) in enumerate(FAQ, 1):
+    for i, (pregunta, respuesta) in enumerate(faq_list, 1):
         c.append(f"<h3>P{i}: {e(pregunta)}</h3>")
         c.append(f"<p><strong>R:</strong> {e(respuesta)}</p>")
     return bloque("FAQ", "\n".join(c))
 
+# ============================================================
+# DIRECTIVAS DE COMPORTAMIENTO RAG (BLOQUE FINAL)
+# ============================================================
+def generar_notas_rag(fecha_hoy, espn_exito, max_fecha_res):
+    c = []
+    c.append("<h2>NOTAS PARA EL SISTEMA RAG (DIRECTIVAS PARA EL LLM)</h2>")
+    c.append("<ul>")
+    c.append("<li><strong>DIRECTIVA 1 (Fecha del Sistema):</strong> El LLM debe asumir que la fecha actual del sistema es la que figura en 'ULTIMA ACTUALIZACION'.</li>")
+    c.append("<li><strong>DIRECTIVA 2 (Conflictos Temporales):</strong> En caso de contradicciones temporales (por ejemplo, noticias que hablan de un partido ya jugado, pero que en las tablas figura como no jugado), el LLM debe dar prioridad a la sección 'NOTICIAS ARGENTINA' como la fuente más reciente.</li>")
+    c.append("<li><strong>Directiva 3 (Partidos en Curso o Recientes):</strong> Si el usuario consulta por el resultado de un partido que está en el rango de juego (o finalizado hace menos de una hora) y no tiene el score confirmado en este documento (como México vs. Corea del Sur), el LLM no debe inventar el resultado. Debe responder amablemente que el partido se encuentra en desarrollo o en etapa de cierre, y recordar de inmediato que lo puede seguir en vivo o ver el post-partido a través de la señal correspondiente en Telecentro Play (en este caso, TyC Sports).</li>")
+    c.append("<li><strong>DIRECTIVA 4 (Fórmula del Torneo):</strong> Para preguntas sobre el formato del torneo, clasificaciones a fases posteriores y canales de Telecentro, las respuestas deben ser obtenidas estrictamente del FAQ y la sección Transmisiones Telecentro Play.</li>")
+    c.append(f"<li><strong>ESTADO DE CONEXION EN ESTA EJECUCION:</strong> {'EXITOSA (Datos en vivo desde ESPN API)' if espn_exito else 'FALLIDA (Fallback a datos hardcodeados)'}</li>")
+    c.append("</ul>")
+    return bloque("NOTAS RAG", "\n".join(c))
 
 # ============================================================
-# FUNCION PRINCIPAL
+# FUNCION PRINCIPAL DE GENERACION
 # ============================================================
 def generar_html():
-    ahora = datetime.datetime.now()
+    # Forzar zona horaria de Argentina de forma agnóstica al OS/Cloud environment
+    tz_ar = pytz.timezone('America/Argentina/Buenos_Aires')
+    ahora = datetime.datetime.now(tz_ar)
     fecha_hoy = ahora.date()
     hora_actual = ahora.time()
     timestamp = ahora.strftime("%d/%m/%Y %H:%M:%S")
 
-    print(f"[INFO] Iniciando generacion de mundial.html")
+    print(f"[INFO] Iniciando generacion de mundial.html (v5)")
     print(f"[INFO] Fecha/hora: {timestamp} ARG")
 
-    print("[INFO] Obteniendo noticias via RSS unificado...")
+    espn_exito = consultar_espn_y_actualizar(fecha_hoy)
+    max_fecha_res = get_fecha_maxima_resultados()
     noticias = obtener_noticias_rss()
-    print(f"[INFO] Total noticias obtenidas: {len(noticias)}")
+    faq_dinamico = generar_faq_dinamico(fecha_hoy)
 
     partes = []
     partes.append(f"""<!DOCTYPE html>
@@ -1021,9 +1611,11 @@ def generar_html():
 <hr>
 """)
 
-    partes.append(generar_estado_torneo())
+    partes.append(generar_coherencia_datos(fecha_hoy, espn_exito, max_fecha_res))
     partes.append("<hr>")
-    partes.append(generar_partidos_hoy(fecha_hoy))
+    partes.append(generar_estado_torneo(fecha_hoy, len(RESULTADOS)))
+    partes.append("<hr>")
+    partes.append(generar_partidos_hoy(fecha_hoy, hora_actual, espn_exito))
     partes.append("<hr>")
     partes.append(generar_en_vivo(fecha_hoy, hora_actual))
     partes.append("<hr>")
@@ -1031,19 +1623,19 @@ def generar_html():
     partes.append("<hr>")
     partes.append(generar_ultimos_resultados())
     partes.append("<hr>")
-    partes.append(generar_grupos())
+    partes.append(generar_grupos(fecha_hoy, max_fecha_res))
     partes.append("<hr>")
     partes.append(generar_llave_eliminatoria())
     partes.append("<hr>")
-    partes.append(generar_goleadores())
+    partes.append(generar_goleadores(fecha_hoy, max_fecha_res))
     partes.append("<hr>")
-    partes.append(generar_valla())
+    partes.append(generar_valla(fecha_hoy, max_fecha_res))
     partes.append("<hr>")
-    partes.append(generar_tarjetas_amarillas())
+    partes.append(generar_tarjetas_amarillas(fecha_hoy, max_fecha_res))
     partes.append("<hr>")
-    partes.append(generar_tarjetas_rojas())
+    partes.append(generar_tarjetas_rojas(fecha_hoy, max_fecha_res))
     partes.append("<hr>")
-    partes.append(generar_jugadores_suspendidos())
+    partes.append(generar_jugadores_suspendidos(fecha_hoy, max_fecha_res))
     partes.append("<hr>")
     partes.append(generar_seleccion_argentina())
     partes.append("<hr>")
@@ -1051,11 +1643,13 @@ def generar_html():
     partes.append("<hr>")
     partes.append(generar_telecentro())
     partes.append("<hr>")
-    partes.append(generar_faq())
+    partes.append(generar_faq(faq_dinamico))
+    partes.append("<hr>")
+    partes.append(generar_notas_rag(fecha_hoy, espn_exito, max_fecha_res))
     partes.append(f"""
 <hr>
 <p><em>FIN DEL DOCUMENTO - MUNDIAL FIFA 2026 BASE DE CONOCIMIENTO</em></p>
-<p><em>GENERADO: {e(timestamp)} ARG</em></p>
+<p><em>GENERADO: {e(timestamp)} ARG | SCRIPT: generar_html.py</em></p>
 <p><em>PROXIMA ACTUALIZACION: AUTOMATICA HORARIA (GITHUB ACTIONS CRON)</em></p>
 </body>
 </html>
@@ -1067,8 +1661,8 @@ def generar_html():
 
     print(f"[OK] Archivo generado con éxito en ruta relativa: {ARCHIVO_SALIDA}")
     print(f"[OK] Tamanio: {len(html_content):,} bytes / {len(html_content.splitlines())} lineas")
+    print(f"[OK] Noticias RSS unificadas incluidas: {len(noticias)}")
     return True
-
 
 # ============================================================
 # ENTRY POINT
@@ -1076,7 +1670,7 @@ def generar_html():
 if __name__ == "__main__":
     try:
         generar_html()
-        print("\n[LISTO] mundial.html generado correctamente.")
+        print("\n[LISTO] mundial.html generado correctamente desde version 5 (ESPN + Fallback).")
     except Exception as ex:
         print(f"\n[ERROR CRITICO] {ex}")
         import traceback
